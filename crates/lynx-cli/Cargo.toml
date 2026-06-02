@@ -1,7 +1,11 @@
 [package]
-name = "lynx-cli"
+name = "pizen-lynx"
 version = "0.1.0"
 edition = "2021"
+
+[[bin]]
+name = "lx"
+path = "src/main.rs"
 
 [dependencies]
 anyhow = "1.0.102"

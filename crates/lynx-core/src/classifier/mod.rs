@@ -8,9 +8,9 @@ pub enum QueryType {
 impl QueryType {
     pub fn weights(self) -> (f32, f32) {
         match self {
-            QueryType::Symbol => (0.90, 0.10),
-            QueryType::Hybrid => (0.50, 0.50),
-            QueryType::NaturalLanguage => (0.10, 0.90),
+            QueryType::Symbol => (0.95, 0.05),
+            QueryType::Hybrid => (0.70, 0.30),
+            QueryType::NaturalLanguage => (0.20, 0.80),
         }
     }
 }

@@ -1,7 +1,8 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use lynx_core::Lynx;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 
 #[derive(Parser)]
 #[command(name = "lx")]
@@ -27,6 +28,11 @@ enum Commands {
     Resolve { name: String },
     /// Find related implementations
     Related { location: String },
+    #[command(hide = true)]
+    Init {
+        #[arg(default_value = ".")]
+        path: PathBuf,
+    },
 }
 
 #[tokio::main]
@@ -48,14 +54,7 @@ async fn main() -> Result<()> {
                 println!("No results found.");
             } else {
                 for result in results {
-                    println!(
-                        "[{:.4}] {}:{}-{} - {}",
-                        result.score,
-                        result.file_path,
-                        result.start_line,
-                        result.end_line,
-                        result.symbol_id
-                    );
+                    println!("{}", format_discovery(&result));
                 }
             }
         }
@@ -65,10 +64,7 @@ async fn main() -> Result<()> {
                 println!("No symbols found.");
             } else {
                 for result in results {
-                    println!(
-                        "[symbol] {}:{}-{} - {}",
-                        result.file_path, result.start_line, result.end_line, result.symbol_id
-                    );
+                    println!("{}", format_discovery(&result));
                 }
             }
         }
@@ -79,16 +75,24 @@ async fn main() -> Result<()> {
                 println!("No related results found.");
             } else {
                 for result in results {
-                    println!(
-                        "[{:.4}] {}:{}-{} - {}",
-                        result.score,
-                        result.file_path,
-                        result.start_line,
-                        result.end_line,
-                        result.symbol_id
-                    );
+                    println!("{}", format_discovery(&result));
                 }
             }
+        }
+        Commands::Init { path } => {
+            println!("Initializing indexes at {:?}", path);
+            let mut lea_child = Command::new("lea")
+                .arg("index")
+                .arg(&path)
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()?;
+            lynx.index_repository(&path).await?;
+            let status = lea_child.wait()?;
+            if !status.success() {
+                return Err(anyhow::anyhow!("lea index failed with status {}", status));
+            }
+            println!("Initialization complete.");
         }
     }
 
@@ -107,4 +111,41 @@ fn parse_location(location: &str) -> Result<(String, usize)> {
         .parse()
         .map_err(|_| anyhow::anyhow!("Invalid line number"))?;
     Ok((file_part.to_string(), line))
+}
+
+fn format_discovery(result: &lynx_protocol::DiscoveryResult) -> String {
+    let (kind, symbol_name) = split_symbol_id(&result.symbol_id, &result.file_path);
+    let lines = if result.start_line == result.end_line {
+        format!("{}", result.start_line)
+    } else {
+        format!("{}-{}", result.start_line, result.end_line)
+    };
+    format!(
+        "{}:{} │ {} ── {}",
+        result.file_path, lines, kind, symbol_name
+    )
+}
+
+fn split_symbol_id(symbol_id: &str, file_path: &str) -> (String, String) {
+    if let Some(rest) = symbol_id.strip_prefix("file:") {
+        let display_name = Path::new(rest)
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or(rest);
+        return ("file".to_string(), display_name.to_string());
+    }
+
+    let mut tail = symbol_id.rsplitn(2, ':');
+    let symbol_name = tail.next().unwrap_or(symbol_id);
+    if let Some(head) = tail.next() {
+        let mut head_parts = head.splitn(2, ':');
+        let kind = head_parts.next().unwrap_or("symbol");
+        return (kind.to_string(), symbol_name.to_string());
+    }
+
+    let fallback = Path::new(file_path)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or(symbol_id);
+    ("symbol".to_string(), fallback.to_string())
 }

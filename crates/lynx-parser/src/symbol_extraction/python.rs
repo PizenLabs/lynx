@@ -38,16 +38,10 @@ pub fn extract(path: &Path, content: &str) -> Result<(Vec<CodeChunk>, Vec<Symbol
         let end_line = node.end_position().row + 1;
         let raw_content = node.utf8_text(content.as_bytes())?.to_string();
 
-        let symbol_name = mat
-            .captures
-            .iter()
-            .find(|c| {
-                let name = query.capture_names()[c.index as usize];
-                name.ends_with("_name")
-            })
-            .and_then(|c| c.node.utf8_text(content.as_bytes()).ok())
-            .unwrap_or("unknown")
-            .to_string();
+        let symbol_name = match resolve_symbol_name(mat, node, &query, content.as_bytes()) {
+            Some(name) => name,
+            None => continue,
+        };
 
         let file_path = path.to_string_lossy().replace('\\', "/");
         let symbol_id = format!("{}:{}:{}", capture_name, file_path, symbol_name);
@@ -71,4 +65,49 @@ pub fn extract(path: &Path, content: &str) -> Result<(Vec<CodeChunk>, Vec<Symbol
     }
 
     Ok((chunks, symbols))
+}
+
+fn resolve_symbol_name(
+    mat: &tree_sitter::QueryMatch,
+    node: tree_sitter::Node,
+    query: &Query,
+    content: &[u8],
+) -> Option<String> {
+    if let Some(capture) = mat.captures.iter().find(|c| {
+        let name = query.capture_names()[c.index as usize];
+        name.ends_with("_name")
+    }) {
+        if let Ok(text) = capture.node.utf8_text(content) {
+            return Some(text.to_string());
+        }
+    }
+
+    if let Some(name_node) = node
+        .child_by_field_name("name")
+        .or_else(|| node.child_by_field_name("type"))
+    {
+        if let Ok(text) = name_node.utf8_text(content) {
+            return Some(text.to_string());
+        }
+    }
+
+    find_identifier_in_node(node, content)
+}
+
+fn find_identifier_in_node(node: tree_sitter::Node, content: &[u8]) -> Option<String> {
+    let mut cursor = node.walk();
+    for child in node.named_children(&mut cursor) {
+        if matches!(
+            child.kind(),
+            "identifier" | "type_identifier" | "field_identifier" | "property_identifier"
+        ) {
+            if let Ok(text) = child.utf8_text(content) {
+                return Some(text.to_string());
+            }
+        }
+        if let Some(name) = find_identifier_in_node(child, content) {
+            return Some(name);
+        }
+    }
+    None
 }
