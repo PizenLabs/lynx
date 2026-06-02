@@ -2,8 +2,9 @@ use anyhow::Result;
 use lynx_protocol::{CodeChunk, SymbolRecord};
 use std::path::Path;
 use tantivy::{Index, IndexWriter, ReloadPolicy, query::QueryParser, doc, DocAddress};
-use tantivy::schema::Value;
-use tantivy::collector::{TopDocs, Collector};
+use tantivy::schema::{Value, IndexRecordOption, Term};
+use tantivy::collector::TopDocs;
+use tantivy::query::{BooleanQuery, Occur, TermQuery};
 use crate::schema::{ChunkSchema, SymbolSchema};
 
 pub struct TantivyStorage {
@@ -57,6 +58,7 @@ impl TantivyStorage {
             writer.add_document(doc!(
                 self.symbol_schema.symbol_id => symbol.symbol_id.clone(),
                 self.symbol_schema.symbol_name => symbol.symbol_name.clone(),
+                self.symbol_schema.symbol_name_exact => symbol.symbol_name.clone(),
                 self.symbol_schema.file_path => symbol.file_path.clone(),
                 self.symbol_schema.start_line => symbol.start_line as u64,
                 self.symbol_schema.end_line => symbol.end_line as u64,
@@ -95,7 +97,10 @@ impl TantivyStorage {
     pub fn search_symbols(&self, query_str: &str, limit: usize) -> Result<Vec<SymbolRecord>> {
         let reader = self.symbol_index.reader_builder().reload_policy(ReloadPolicy::OnCommitWithDelay).try_into()?;
         let searcher = reader.searcher();
-        let query_parser = QueryParser::for_index(&self.symbol_index, vec![self.symbol_schema.symbol_name, self.symbol_schema.symbol_id]);
+        let query_parser = QueryParser::for_index(
+            &self.symbol_index,
+            vec![self.symbol_schema.symbol_name, self.symbol_schema.symbol_id],
+        );
         let query = query_parser.parse_query(query_str)?;
         let top_docs: Vec<(f32, DocAddress)> = searcher.search(&query, &TopDocs::with_limit(limit).order_by_score())?;
 
@@ -103,13 +108,89 @@ impl TantivyStorage {
         for (_score, doc_address) in top_docs {
             let retrieved_doc: tantivy::TantivyDocument = searcher.doc(doc_address)?;
             results.push(SymbolRecord {
-                symbol_id: retrieved_doc.get_first(self.symbol_schema.symbol_id).and_then(|v| v.as_str()).unwrap_or_default().to_string(),
-                symbol_name: retrieved_doc.get_first(self.symbol_schema.symbol_name).and_then(|v| v.as_str()).unwrap_or_default().to_string(),
-                file_path: retrieved_doc.get_first(self.symbol_schema.file_path).and_then(|v| v.as_str()).unwrap_or_default().to_string(),
-                start_line: retrieved_doc.get_first(self.symbol_schema.start_line).and_then(|v| v.as_u64()).unwrap_or_default() as usize,
-                end_line: retrieved_doc.get_first(self.symbol_schema.end_line).and_then(|v| v.as_u64()).unwrap_or_default() as usize,
+                symbol_id: retrieved_doc
+                    .get_first(self.symbol_schema.symbol_id)
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default()
+                    .to_string(),
+                symbol_name: retrieved_doc
+                    .get_first(self.symbol_schema.symbol_name)
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default()
+                    .to_string(),
+                file_path: retrieved_doc
+                    .get_first(self.symbol_schema.file_path)
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default()
+                    .to_string(),
+                start_line: retrieved_doc
+                    .get_first(self.symbol_schema.start_line)
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or_default() as usize,
+                end_line: retrieved_doc
+                    .get_first(self.symbol_schema.end_line)
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or_default() as usize,
             });
         }
+        Ok(results)
+    }
+
+    pub fn resolve_symbol_exact(&self, query_str: &str, limit: usize) -> Result<Vec<SymbolRecord>> {
+        let reader = self
+            .symbol_index
+            .reader_builder()
+            .reload_policy(ReloadPolicy::OnCommitWithDelay)
+            .try_into()?;
+        let searcher = reader.searcher();
+
+        let mut clauses: Vec<(Occur, Box<dyn tantivy::query::Query>)> = Vec::new();
+        let symbol_id_term = Term::from_field_text(self.symbol_schema.symbol_id, query_str);
+        clauses.push((
+            Occur::Should,
+            Box::new(TermQuery::new(symbol_id_term, IndexRecordOption::Basic)),
+        ));
+
+        let symbol_name_term = Term::from_field_text(self.symbol_schema.symbol_name_exact, query_str);
+        clauses.push((
+            Occur::Should,
+            Box::new(TermQuery::new(symbol_name_term, IndexRecordOption::Basic)),
+        ));
+
+        let query = BooleanQuery::new(clauses);
+        let top_docs: Vec<(f32, DocAddress)> =
+            searcher.search(&query, &TopDocs::with_limit(limit).order_by_score())?;
+
+        let mut results = Vec::new();
+        for (_score, doc_address) in top_docs {
+            let retrieved_doc: tantivy::TantivyDocument = searcher.doc(doc_address)?;
+            results.push(SymbolRecord {
+                symbol_id: retrieved_doc
+                    .get_first(self.symbol_schema.symbol_id)
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default()
+                    .to_string(),
+                symbol_name: retrieved_doc
+                    .get_first(self.symbol_schema.symbol_name)
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default()
+                    .to_string(),
+                file_path: retrieved_doc
+                    .get_first(self.symbol_schema.file_path)
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default()
+                    .to_string(),
+                start_line: retrieved_doc
+                    .get_first(self.symbol_schema.start_line)
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or_default() as usize,
+                end_line: retrieved_doc
+                    .get_first(self.symbol_schema.end_line)
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or_default() as usize,
+            });
+        }
+
         Ok(results)
     }
 }

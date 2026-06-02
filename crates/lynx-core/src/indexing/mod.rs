@@ -1,17 +1,19 @@
 use anyhow::Result;
 use lynx_parser::Parser;
-use lynx_storage::Storage;
+use lynx_storage::{Storage, EmbeddingRecord};
+use lynx_embed::EmbedderManager;
 use std::path::Path;
 use walkdir::WalkDir;
 
 pub struct Indexer<'a> {
     parser: &'a Parser,
     storage: &'a Storage,
+    embedder: &'a EmbedderManager,
 }
 
 impl<'a> Indexer<'a> {
-    pub fn new(parser: &'a Parser, storage: &'a Storage) -> Self {
-        Self { parser, storage }
+    pub fn new(parser: &'a Parser, storage: &'a Storage, embedder: &'a EmbedderManager) -> Self {
+        Self { parser, storage, embedder }
     }
 
     pub async fn index_repository(&mut self, repo_path: &Path) -> Result<()> {
@@ -30,10 +32,20 @@ impl<'a> Indexer<'a> {
                 Err(_) => continue, // Skip binary or unreadable files
             };
 
-            let (chunks, symbols) = self.parser.parse_file(path, &content)?;
+            let relative_path = path.strip_prefix(repo_path).unwrap_or(path).to_path_buf();
+            let (chunks, symbols) = self.parser.parse_file(&relative_path, &content)?;
             
             if !chunks.is_empty() {
                 self.storage.index_chunks(&chunks)?;
+                let texts: Vec<String> = chunks.iter().map(|chunk| chunk.raw_content.clone()).collect();
+                let embeddings = self.embedder.embed_batch(&texts).await?;
+                let records: Vec<EmbeddingRecord> = chunks
+                    .iter()
+                    .cloned()
+                    .zip(embeddings)
+                    .map(|(chunk, embedding)| EmbeddingRecord { chunk, embedding })
+                    .collect();
+                self.storage.index_embeddings(records)?;
             }
             if !symbols.is_empty() {
                 self.storage.index_symbols(&symbols)?;

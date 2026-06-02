@@ -1641,8 +1641,12 @@ dependencies = [
 name = "lynx-mcp"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "lynx-core",
  "lynx-protocol",
+ "serde",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]
@@ -1675,6 +1679,7 @@ dependencies = [
  "anyhow",
  "lynx-protocol",
  "serde",
+ "serde_json",
  "tantivy",
 ]
 

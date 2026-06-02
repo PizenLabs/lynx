@@ -23,7 +23,7 @@ pub fn extract(path: &Path, content: &str) -> Result<(Vec<CodeChunk>, Vec<Symbol
     let mut cursor = QueryCursor::new();
     let mut captures = cursor.captures(&query, root_node, content.as_bytes());
 
-    while let Some(&(mat, capture_index)) = captures.next() {
+    while let Some(&(ref mat, capture_index)) = captures.next() {
         let capture = mat.captures[capture_index];
         let capture_name = query.capture_names()[capture.index as usize];
         
@@ -45,7 +45,7 @@ pub fn extract(path: &Path, content: &str) -> Result<(Vec<CodeChunk>, Vec<Symbol
             .unwrap_or("unknown")
             .to_string();
 
-        let file_path = path.to_string_lossy().to_string();
+        let file_path = path.to_string_lossy().replace('\\', "/");
         let symbol_id = format!("{}:{}:{}", capture_name, file_path, symbol_name);
         
         symbols.push(SymbolRecord {

@@ -1,5 +1,5 @@
 use anyhow::Result;
-use lynx_protocol::{CodeChunk, SymbolRecord};
+use lynx_protocol::CodeChunk;
 use lynx_storage::Storage;
 use lynx_embed::EmbedderManager;
 
@@ -19,9 +19,8 @@ impl<'a> Retriever<'a> {
         Ok(self.storage.search_chunks_with_scores(query, limit)?)
     }
 
-    pub async fn retrieve_semantic(&self, _query: &str, _limit: usize) -> Result<Vec<(CodeChunk, f32)>> {
-        // For now, return empty or implement simple linear scan if we had the embeddings
-        // Since we don't have a vector store yet, we'll skip this or do a mock
-        Ok(vec![])
+    pub async fn retrieve_semantic(&self, query: &str, limit: usize) -> Result<Vec<(CodeChunk, f32)>> {
+        let embedding = self.embedder.embed(query).await?;
+        self.storage.vector_search(&embedding, limit)
     }
 }

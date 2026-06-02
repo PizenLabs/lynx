@@ -33,12 +33,55 @@ impl Lynx {
     }
 
     pub async fn index_repository(&self, repo_path: &Path) -> Result<()> {
-        let mut indexer = indexing::Indexer::new(&self.parser, &self.storage);
+        let mut indexer = indexing::Indexer::new(&self.parser, &self.storage, &self.embedder);
         indexer.index_repository(repo_path).await
     }
 
     pub async fn search(&self, query: &str) -> Result<Vec<lynx_protocol::DiscoveryResult>> {
         let pipeline = pipeline::SearchPipeline::new(&self.storage, &self.embedder);
         pipeline.search(query).await
+    }
+
+    pub async fn resolve_symbol(&self, query: &str) -> Result<Vec<lynx_protocol::DiscoveryResult>> {
+        let records = self.storage.search_symbols(query, 25)?;
+        Ok(records
+            .into_iter()
+            .map(|record| lynx_protocol::DiscoveryResult {
+                symbol_id: record.symbol_id,
+                score: 1.0,
+                file_path: record.file_path,
+                start_line: record.start_line,
+                end_line: record.end_line,
+            })
+            .collect())
+    }
+
+    pub async fn find_related(
+        &self,
+        file_path: &str,
+        line: usize,
+    ) -> Result<Vec<lynx_protocol::DiscoveryResult>> {
+        let record = self.storage.find_embedding_by_location(file_path, line)?;
+        let Some(record) = record else {
+            return Ok(vec![]);
+        };
+
+        let mut results = self.storage.vector_search(&record.embedding, 20)?;
+        results.retain(|(chunk, _score)| chunk.file_path != file_path || line < chunk.start_line || line > chunk.end_line);
+
+        Ok(results
+            .into_iter()
+            .map(|(chunk, score)| lynx_protocol::DiscoveryResult {
+                symbol_id: chunk
+                    .symbols_defined
+                    .first()
+                    .cloned()
+                    .unwrap_or_else(|| format!("file:{}", chunk.file_path)),
+                score,
+                file_path: chunk.file_path,
+                start_line: chunk.start_line,
+                end_line: chunk.end_line,
+            })
+            .collect())
     }
 }

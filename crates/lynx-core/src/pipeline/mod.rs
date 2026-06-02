@@ -4,6 +4,7 @@ use lynx_storage::Storage;
 use lynx_embed::EmbedderManager;
 use crate::retrieval::Retriever;
 use crate::ranking::Ranker;
+use crate::classifier::{classify_query, QueryType};
 
 pub struct SearchPipeline<'a> {
     storage: &'a Storage,
@@ -16,13 +17,30 @@ impl<'a> SearchPipeline<'a> {
     }
 
     pub async fn search(&self, query: &str) -> Result<Vec<DiscoveryResult>> {
+        let query_type = classify_query(query);
+
+        if query_type == QueryType::Symbol {
+            let symbol_results = self.storage.resolve_symbol_exact(query, 25)?;
+            if !symbol_results.is_empty() {
+                return Ok(symbol_results
+                    .into_iter()
+                    .map(|record| DiscoveryResult {
+                        symbol_id: record.symbol_id,
+                        score: 1.0,
+                        file_path: record.file_path,
+                        start_line: record.start_line,
+                        end_line: record.end_line,
+                    })
+                    .collect());
+            }
+        }
+
         let retriever = Retriever::new(self.storage, self.embedder);
-        
-        let lexical_results = retriever.retrieve_lexical(query, 50).await?;
-        let semantic_results = retriever.retrieve_semantic(query, 50).await?;
+        let (lexical_results, semantic_results) = tokio::try_join!(
+            retriever.retrieve_lexical(query, 50),
+            retriever.retrieve_semantic(query, 50)
+        )?;
 
-        let fused_results = Ranker::rrf(lexical_results, semantic_results, 60.0);
-
-        Ok(fused_results)
+        Ok(Ranker::rank(query, query_type, lexical_results, semantic_results, 60.0))
     }
 }
