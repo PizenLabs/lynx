@@ -30,4 +30,5 @@ Desktop.ini
 *.log
 crash.dump
 .commit_suggest_history.json
-
+.fastembed_cache/
+.lynx/

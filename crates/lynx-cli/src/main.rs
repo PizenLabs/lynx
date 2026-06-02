@@ -4,7 +4,7 @@ use lynx_core::Lynx;
 use std::path::PathBuf;
 
 #[derive(Parser)]
-#[command(name = "lynx")]
+#[command(name = "lx")]
 #[command(about = "Lynx: Discovery Engine for AI-Native Software Engineering", long_about = None)]
 struct Cli {
     #[arg(short, long, default_value = ".lynx")]

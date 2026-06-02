@@ -1,16 +1,15 @@
 # Lynx
 
-Lynx is the Discovery Layer of the PizenLabs ecosystem. It converts human intent into precise repository coordinates (symbols, files, chunks) so downstream tools like Lea can reason about structure and impact.
+Lynx is the discovery layer of the PizenLabs ecosystem. It converts human intent into precise repository coordinates (symbols, files, chunks) so downstream tools like Lea can reason about structure and impact.
 
 **Lynx discovers. Lea reasons.**
 
-## Key Features
+## Features
 
-- **Symbol-first discovery**: returns symbol coordinates whenever possible.
+- **Symbol-first discovery** with stable, deterministic identifiers.
 - **Hybrid retrieval**: BM25 + semantic embeddings with Reciprocal Rank Fusion (RRF).
-- **Deterministic results**: predictable outputs and heuristic boosts.
-- **Local-first & CPU-first**: no cloud services, no GPU dependency.
-- **Tree-sitter chunking**: structural code chunks (functions, types, methods).
+- **Local-first, CPU-first** design with no cloud or GPU dependency.
+- **Tree-sitter chunking** for structured code segmentation.
 - **Minimal MCP interface**: `search`, `resolve_symbol`, `find_related`.
 
 ## Architecture (High Level)
@@ -36,39 +35,45 @@ Human Request
 - **FastEmbed** (local embeddings)
 - **Serde** (serialization)
 
-## Quick Start
+## Getting Started
 
-### 1) Build
+### Prerequisites
+
+- Rust toolchain (stable)
+
+### Build
 
 ```bash
 cargo build
 ```
 
-### 2) Index a repository
+### CLI Usage (binary: `lx`)
+
+Index a repository:
 
 ```bash
 cargo run -p lynx-cli -- index /path/to/repo
 ```
 
-### 3) Search
+Search the index:
 
 ```bash
 cargo run -p lynx-cli -- search "authentication flow"
 ```
 
-### 4) Resolve a symbol
+Resolve a symbol:
 
 ```bash
 cargo run -p lynx-cli -- resolve Login
 ```
 
-### 5) Find related implementations
+Find related implementations:
 
 ```bash
 cargo run -p lynx-cli -- related internal/auth/service.go:42
 ```
 
-## MCP Server (JSON Lines)
+### MCP Server (JSON Lines)
 
 Run:
 
@@ -103,9 +108,9 @@ crates/
   lynx-storage/   # Tantivy index + embedding cache
 ```
 
-## Notes
+## Project Principles
 
-- Lynx focuses strictly on discovery; impact analysis and reasoning are delegated to Lea.
+- Lynx focuses strictly on discovery; reasoning and impact analysis are delegated to Lea.
 - Results prioritize **symbol IDs** over raw snippets whenever possible.
 
 ## License
