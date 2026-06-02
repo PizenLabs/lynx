@@ -1,15 +1,40 @@
+<div align="center">
+
+<img src="https://raw.githubusercontent.com/PizenLabs/onpic/refs/heads/main/lynx/lynx.png" width="28%" alt="Lynx Logo" />
+
 # Lynx
 
-Lynx is the discovery layer of the PizenLabs ecosystem. It converts human intent into precise repository coordinates (symbols, files, chunks) so downstream tools like Lea can reason about structure and impact.
+### Symbol-first repository discovery engine for AI-native developer tooling.
 
-**Lynx discovers. Lea reasons.**
+**Lynx transforms developer intent into stable repository coordinates — symbols, files, and structural chunks — enabling downstream reasoning systems like Lea to operate on deterministic code primitives instead of fragile text spans.**
+
+[![Crates.io](https://img.shields.io/crates/v/pizen-lynx?style=flat-square&color=orange)](https://crates.io/crates/pizen-lynx)
+[![Docs.rs](https://img.shields.io/docsrs/pizen-lynx?style=flat-square&color=blue)](https://docs.rs/pizen-lynx)
+[![CI](https://img.shields.io/github/actions/workflow/status/PizenLabs/lynx/ci.yml?branch=main&style=flat-square)](https://github.com/PizenLabs/lynx/actions)
+[![License](https://img.shields.io/badge/license-MIT-blue?style=flat-square)](./LICENSE)
+[![Stars](https://img.shields.io/github/stars/PizenLabs/lynx?style=flat-square&color=gold)](https://github.com/PizenLabs/lynx/stargazers)
+
+---
+
+ **Lynx discovers. Lea reasons.**
+
+[Features](#features) •
+[Architecture](#architecture-high-level) •
+[Installation](#installation) •
+[Usage](#usage) •
+[MCP Server](#mcp-server-json-lines) •
+[Repository Layout](#repository-layout) •
+[Contributing](#contributing)
+
+</div>
+
 
 ## Features
 
 - **Symbol-first discovery** with stable, deterministic identifiers.
 - **Hybrid retrieval**: BM25 + semantic embeddings with Reciprocal Rank Fusion (RRF).
 - **Local-first, CPU-first** design with no cloud or GPU dependency.
-- **Tree-sitter chunking** for structured code segmentation.
+- **Tree-sitter parsing** for structured symbol extraction and chunking.
 - **Minimal MCP interface**: `search`, `resolve_symbol`, `find_related`.
 
 ## Architecture (High Level)
@@ -35,45 +60,55 @@ Human Request
 - **FastEmbed** (local embeddings)
 - **Serde** (serialization)
 
-## Getting Started
+## Installation
 
-### Prerequisites
-
-- Rust toolchain (stable)
-
-### Build
+Install the CLI from crates.io:
 
 ```bash
-cargo build
+cargo install pizen-lynx
 ```
 
-### CLI Usage (binary: `lx`)
+The binary name is **`lx`**.
+
+## Usage
 
 Index a repository:
 
 ```bash
-cargo run -p lynx-cli -- index /path/to/repo
+lx index /path/to/repo
 ```
 
 Search the index:
 
 ```bash
-cargo run -p lynx-cli -- search "authentication flow"
+lx search "authentication flow"
 ```
 
 Resolve a symbol:
 
 ```bash
-cargo run -p lynx-cli -- resolve Login
+lx resolve Login
 ```
 
 Find related implementations:
 
 ```bash
-cargo run -p lynx-cli -- related internal/auth/service.go:42
+lx related internal/auth/service.go:42
 ```
 
-### MCP Server (JSON Lines)
+To change the storage location (default: `.lynx`):
+
+```bash
+lx --storage-path /tmp/lynx index .
+```
+
+### Development
+
+```bash
+cargo run -p pizen-lynx -- search "jwt validation"
+```
+
+## MCP Server (JSON Lines)
 
 Run:
 
@@ -99,7 +134,7 @@ Send JSON per line on stdin:
 
 ```
 crates/
-  lynx-cli/       # CLI tool
+  lynx-cli/       # CLI tool (crate: pizen-lynx)
   lynx-core/      # Retrieval pipeline + ranking
   lynx-embed/     # Embeddings (FastEmbed)
   lynx-mcp/       # MCP server
@@ -112,6 +147,10 @@ crates/
 
 - Lynx focuses strictly on discovery; reasoning and impact analysis are delegated to Lea.
 - Results prioritize **symbol IDs** over raw snippets whenever possible.
+
+## Contributing
+
+Issues and pull requests are welcome. Please run `make ci` before submitting.
 
 ## License
 
