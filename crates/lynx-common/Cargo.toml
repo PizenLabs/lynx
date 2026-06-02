@@ -2,5 +2,9 @@
 name = "lynx-common"
 version = "0.1.0"
 edition = "2021"
+description = "Shared utilities and types for the Lynx project."
+license = "MIT"
+repository = { workspace = true }
+homepage = { workspace = true }
 
 [dependencies]

@@ -2,6 +2,10 @@
 name = "lynx-mcp"
 version = "0.1.0"
 edition = "2021"
+description = "Model context protocol integration for Lynx."
+license = "MIT"
+repository = { workspace = true }
+homepage = { workspace = true }
 
 [dependencies]
 anyhow = "1.0.102"

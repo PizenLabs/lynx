@@ -4,6 +4,11 @@ members = [
 ]
 resolver = "2"
 
+[workspace.package]
+repository = "https://github.com/PizenLabs/lynx"
+homepage = "https://github.com/PizenLabs/lynx"
+license = "MIT"
+
 [profile.release]
 opt-level = 3
 lto = true

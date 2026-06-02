@@ -2,6 +2,10 @@
 name = "pizen-lynx"
 version = "0.1.0"
 edition = "2021"
+description = "CLI for the Lynx platform."
+license = "MIT"
+repository = { workspace = true }
+homepage = { workspace = true }
 
 [[bin]]
 name = "lx"
