@@ -1,0 +1,10 @@
+[package]
+name = "lynx-storage"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = "1.0.102"
+lynx-protocol = { version = "0.1.0", path = "../lynx-protocol" }
+serde = { version = "1.0.228", features = ["derive"] }
+tantivy = "0.26.1"
