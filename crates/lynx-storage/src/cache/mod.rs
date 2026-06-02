@@ -1,10 +1,10 @@
 use anyhow::Result;
 use lynx_protocol::CodeChunk;
 use serde::{Deserialize, Serialize};
+use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
-use std::cmp::Ordering;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EmbeddingRecord {

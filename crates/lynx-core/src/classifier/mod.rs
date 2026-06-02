@@ -36,9 +36,7 @@ pub fn classify_query(query: &str) -> QueryType {
         return QueryType::Symbol;
     }
 
-    let has_identifier = trimmed
-        .split_whitespace()
-        .any(|token| is_identifier_like(token));
+    let has_identifier = trimmed.split_whitespace().any(is_identifier_like);
 
     if has_identifier {
         QueryType::Hybrid

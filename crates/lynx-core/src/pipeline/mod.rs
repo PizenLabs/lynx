@@ -1,10 +1,10 @@
+use crate::classifier::{classify_query, QueryType};
+use crate::ranking::Ranker;
+use crate::retrieval::Retriever;
 use anyhow::Result;
+use lynx_embed::EmbedderManager;
 use lynx_protocol::DiscoveryResult;
 use lynx_storage::Storage;
-use lynx_embed::EmbedderManager;
-use crate::retrieval::Retriever;
-use crate::ranking::Ranker;
-use crate::classifier::{classify_query, QueryType};
 
 pub struct SearchPipeline<'a> {
     storage: &'a Storage,
@@ -41,6 +41,12 @@ impl<'a> SearchPipeline<'a> {
             retriever.retrieve_semantic(query, 50)
         )?;
 
-        Ok(Ranker::rank(query, query_type, lexical_results, semantic_results, 60.0))
+        Ok(Ranker::rank(
+            query,
+            query_type,
+            lexical_results,
+            semantic_results,
+            60.0,
+        ))
     }
 }

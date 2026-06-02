@@ -1,7 +1,7 @@
 use anyhow::Result;
-use lynx_parser::Parser;
-use lynx_storage::{Storage, EmbeddingRecord};
 use lynx_embed::EmbedderManager;
+use lynx_parser::Parser;
+use lynx_storage::{EmbeddingRecord, Storage};
 use std::path::Path;
 use walkdir::WalkDir;
 
@@ -13,7 +13,11 @@ pub struct Indexer<'a> {
 
 impl<'a> Indexer<'a> {
     pub fn new(parser: &'a Parser, storage: &'a Storage, embedder: &'a EmbedderManager) -> Self {
-        Self { parser, storage, embedder }
+        Self {
+            parser,
+            storage,
+            embedder,
+        }
     }
 
     pub async fn index_repository(&mut self, repo_path: &Path) -> Result<()> {
@@ -34,10 +38,13 @@ impl<'a> Indexer<'a> {
 
             let relative_path = path.strip_prefix(repo_path).unwrap_or(path).to_path_buf();
             let (chunks, symbols) = self.parser.parse_file(&relative_path, &content)?;
-            
+
             if !chunks.is_empty() {
                 self.storage.index_chunks(&chunks)?;
-                let texts: Vec<String> = chunks.iter().map(|chunk| chunk.raw_content.clone()).collect();
+                let texts: Vec<String> = chunks
+                    .iter()
+                    .map(|chunk| chunk.raw_content.clone())
+                    .collect();
                 let embeddings = self.embedder.embed_batch(&texts).await?;
                 let records: Vec<EmbeddingRecord> = chunks
                     .iter()
@@ -56,11 +63,11 @@ impl<'a> Indexer<'a> {
 
     fn should_skip(&self, path: &Path) -> bool {
         let path_str = path.to_string_lossy();
-        path_str.contains("/.git/") || 
-        path_str.contains("/node_modules/") || 
-        path_str.contains("/vendor/") ||
-        path_str.contains("/target/") ||
-        path_str.contains("/build/") ||
-        path_str.contains("/dist/")
+        path_str.contains("/.git/")
+            || path_str.contains("/node_modules/")
+            || path_str.contains("/vendor/")
+            || path_str.contains("/target/")
+            || path_str.contains("/build/")
+            || path_str.contains("/dist/")
     }
 }

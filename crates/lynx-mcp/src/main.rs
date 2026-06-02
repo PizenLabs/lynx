@@ -89,10 +89,12 @@ async fn handle_request(lynx: &Lynx, request: Request) -> serde_json::Value {
                 .and_then(|value| value.as_u64());
 
             match (file_path, line) {
-                (Some(file_path), Some(line)) => match lynx.find_related(file_path, line as usize).await {
-                    Ok(results) => json!({"result": results}),
-                    Err(err) => json!({"error": err.to_string()}),
-                },
+                (Some(file_path), Some(line)) => {
+                    match lynx.find_related(file_path, line as usize).await {
+                        Ok(results) => json!({"result": results}),
+                        Err(err) => json!({"error": err.to_string()}),
+                    }
+                }
                 _ => json!({"error": "Missing file or line parameter"}),
             }
         }

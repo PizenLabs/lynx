@@ -1,6 +1,6 @@
+use crate::classifier::QueryType;
 use lynx_protocol::{CodeChunk, DiscoveryResult};
 use std::collections::HashMap;
-use crate::classifier::QueryType;
 
 pub struct Ranker;
 
@@ -42,7 +42,11 @@ impl Ranker {
         apply_noise_suppression(&mut scored_chunks);
         apply_file_coherence_boost(&mut scored_chunks);
 
-        scored_chunks.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        scored_chunks.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
 
         scored_chunks
             .into_iter()
@@ -83,9 +87,12 @@ fn apply_identifier_boost(scored_chunks: &mut [ScoredChunk], query: &str) {
 
         let mut boosted = false;
         for symbol_id in &scored.chunk.symbols_defined {
-            let symbol_name = symbol_id.split(':').last().unwrap_or(symbol_id);
+            let symbol_name = symbol_id.split(':').next_back().unwrap_or(symbol_id);
             let symbol_name_lower = symbol_name.to_lowercase();
-            if query_tokens.iter().any(|token| symbol_name_lower == *token || symbol_name_lower.contains(token)) {
+            if query_tokens
+                .iter()
+                .any(|token| symbol_name_lower == *token || symbol_name_lower.contains(token))
+            {
                 boosted = true;
                 break;
             }
@@ -113,7 +120,10 @@ fn apply_noise_suppression(scored_chunks: &mut [ScoredChunk]) {
 
     for scored in scored_chunks {
         let path_lower = scored.chunk.file_path.to_lowercase();
-        if noise_markers.iter().any(|marker| path_lower.contains(marker)) {
+        if noise_markers
+            .iter()
+            .any(|marker| path_lower.contains(marker))
+        {
             scored.score *= 0.05;
         }
     }

@@ -1,11 +1,11 @@
+use crate::schema::{ChunkSchema, SymbolSchema};
 use anyhow::Result;
 use lynx_protocol::{CodeChunk, SymbolRecord};
 use std::path::Path;
-use tantivy::{Index, IndexWriter, ReloadPolicy, query::QueryParser, doc, DocAddress};
-use tantivy::schema::{Value, IndexRecordOption, Term};
 use tantivy::collector::TopDocs;
 use tantivy::query::{BooleanQuery, Occur, TermQuery};
-use crate::schema::{ChunkSchema, SymbolSchema};
+use tantivy::schema::{IndexRecordOption, Term, Value};
+use tantivy::{doc, query::QueryParser, DocAddress, Index, IndexWriter, ReloadPolicy};
 
 pub struct TantivyStorage {
     chunk_index: Index,
@@ -25,8 +25,14 @@ impl TantivyStorage {
         std::fs::create_dir_all(&chunk_path)?;
         std::fs::create_dir_all(&symbol_path)?;
 
-        let chunk_index = Index::open_or_create(tantivy::directory::MmapDirectory::open(chunk_path)?, chunk_schema.schema.clone())?;
-        let symbol_index = Index::open_or_create(tantivy::directory::MmapDirectory::open(symbol_path)?, symbol_schema.schema.clone())?;
+        let chunk_index = Index::open_or_create(
+            tantivy::directory::MmapDirectory::open(chunk_path)?,
+            chunk_schema.schema.clone(),
+        )?;
+        let symbol_index = Index::open_or_create(
+            tantivy::directory::MmapDirectory::open(symbol_path)?,
+            symbol_schema.schema.clone(),
+        )?;
 
         Ok(Self {
             chunk_index,
@@ -69,40 +75,85 @@ impl TantivyStorage {
     }
 
     pub fn search_chunks(&self, query_str: &str, limit: usize) -> Result<Vec<CodeChunk>> {
-        self.search_chunks_with_scores(query_str, limit).map(|v| v.into_iter().map(|(c, _)| c).collect())
+        self.search_chunks_with_scores(query_str, limit)
+            .map(|v| v.into_iter().map(|(c, _)| c).collect())
     }
 
-    pub fn search_chunks_with_scores(&self, query_str: &str, limit: usize) -> Result<Vec<(CodeChunk, f32)>> {
-        let reader = self.chunk_index.reader_builder().reload_policy(ReloadPolicy::OnCommitWithDelay).try_into()?;
+    pub fn search_chunks_with_scores(
+        &self,
+        query_str: &str,
+        limit: usize,
+    ) -> Result<Vec<(CodeChunk, f32)>> {
+        let reader = self
+            .chunk_index
+            .reader_builder()
+            .reload_policy(ReloadPolicy::OnCommitWithDelay)
+            .try_into()?;
         let searcher = reader.searcher();
-        let query_parser = QueryParser::for_index(&self.chunk_index, vec![self.chunk_schema.content, self.chunk_schema.symbols]);
+        let query_parser = QueryParser::for_index(
+            &self.chunk_index,
+            vec![self.chunk_schema.content, self.chunk_schema.symbols],
+        );
         let query = query_parser.parse_query(query_str)?;
-        let top_docs: Vec<(f32, DocAddress)> = searcher.search(&query, &TopDocs::with_limit(limit).order_by_score())?;
+        let top_docs: Vec<(f32, DocAddress)> =
+            searcher.search(&query, &TopDocs::with_limit(limit).order_by_score())?;
 
         let mut results = Vec::new();
         for (score, doc_address) in top_docs {
             let retrieved_doc: tantivy::TantivyDocument = searcher.doc(doc_address)?;
-            results.push((CodeChunk {
-                id: retrieved_doc.get_first(self.chunk_schema.id).and_then(|v| v.as_str()).unwrap_or_default().to_string(),
-                file_path: retrieved_doc.get_first(self.chunk_schema.file_path).and_then(|v| v.as_str()).unwrap_or_default().to_string(),
-                start_line: retrieved_doc.get_first(self.chunk_schema.start_line).and_then(|v| v.as_u64()).unwrap_or_default() as usize,
-                end_line: retrieved_doc.get_first(self.chunk_schema.end_line).and_then(|v| v.as_u64()).unwrap_or_default() as usize,
-                raw_content: retrieved_doc.get_first(self.chunk_schema.content).and_then(|v| v.as_str()).unwrap_or_default().to_string(),
-                symbols_defined: retrieved_doc.get_first(self.chunk_schema.symbols).and_then(|v| v.as_str()).unwrap_or_default().split_whitespace().map(|s| s.to_string()).collect(),
-            }, score));
+            results.push((
+                CodeChunk {
+                    id: retrieved_doc
+                        .get_first(self.chunk_schema.id)
+                        .and_then(|v| v.as_str())
+                        .unwrap_or_default()
+                        .to_string(),
+                    file_path: retrieved_doc
+                        .get_first(self.chunk_schema.file_path)
+                        .and_then(|v| v.as_str())
+                        .unwrap_or_default()
+                        .to_string(),
+                    start_line: retrieved_doc
+                        .get_first(self.chunk_schema.start_line)
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or_default() as usize,
+                    end_line: retrieved_doc
+                        .get_first(self.chunk_schema.end_line)
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or_default() as usize,
+                    raw_content: retrieved_doc
+                        .get_first(self.chunk_schema.content)
+                        .and_then(|v| v.as_str())
+                        .unwrap_or_default()
+                        .to_string(),
+                    symbols_defined: retrieved_doc
+                        .get_first(self.chunk_schema.symbols)
+                        .and_then(|v| v.as_str())
+                        .unwrap_or_default()
+                        .split_whitespace()
+                        .map(|s| s.to_string())
+                        .collect(),
+                },
+                score,
+            ));
         }
         Ok(results)
     }
 
     pub fn search_symbols(&self, query_str: &str, limit: usize) -> Result<Vec<SymbolRecord>> {
-        let reader = self.symbol_index.reader_builder().reload_policy(ReloadPolicy::OnCommitWithDelay).try_into()?;
+        let reader = self
+            .symbol_index
+            .reader_builder()
+            .reload_policy(ReloadPolicy::OnCommitWithDelay)
+            .try_into()?;
         let searcher = reader.searcher();
         let query_parser = QueryParser::for_index(
             &self.symbol_index,
             vec![self.symbol_schema.symbol_name, self.symbol_schema.symbol_id],
         );
         let query = query_parser.parse_query(query_str)?;
-        let top_docs: Vec<(f32, DocAddress)> = searcher.search(&query, &TopDocs::with_limit(limit).order_by_score())?;
+        let top_docs: Vec<(f32, DocAddress)> =
+            searcher.search(&query, &TopDocs::with_limit(limit).order_by_score())?;
 
         let mut results = Vec::new();
         for (_score, doc_address) in top_docs {
@@ -151,7 +202,8 @@ impl TantivyStorage {
             Box::new(TermQuery::new(symbol_id_term, IndexRecordOption::Basic)),
         ));
 
-        let symbol_name_term = Term::from_field_text(self.symbol_schema.symbol_name_exact, query_str);
+        let symbol_name_term =
+            Term::from_field_text(self.symbol_schema.symbol_name_exact, query_str);
         clauses.push((
             Occur::Should,
             Box::new(TermQuery::new(symbol_name_term, IndexRecordOption::Basic)),

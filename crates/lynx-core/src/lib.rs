@@ -1,17 +1,17 @@
 pub mod chunking;
-pub mod indexing;
-pub mod retrieval;
-pub mod ranking;
 pub mod classifier;
-pub mod pipeline;
+pub mod indexing;
 pub mod models;
+pub mod pipeline;
+pub mod ranking;
+pub mod retrieval;
 
 use anyhow::Result;
-use std::path::Path;
+use lynx_embed::fastembed::FastEmbedder;
+use lynx_embed::EmbedderManager;
 use lynx_parser::Parser;
 use lynx_storage::Storage;
-use lynx_embed::EmbedderManager;
-use lynx_embed::fastembed::FastEmbedder;
+use std::path::Path;
 
 pub struct Lynx {
     parser: Parser,
@@ -67,7 +67,9 @@ impl Lynx {
         };
 
         let mut results = self.storage.vector_search(&record.embedding, 20)?;
-        results.retain(|(chunk, _score)| chunk.file_path != file_path || line < chunk.start_line || line > chunk.end_line);
+        results.retain(|(chunk, _score)| {
+            chunk.file_path != file_path || line < chunk.start_line || line > chunk.end_line
+        });
 
         Ok(results
             .into_iter()

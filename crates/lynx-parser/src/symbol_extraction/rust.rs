@@ -7,8 +7,10 @@ use tree_sitter_rust::LANGUAGE;
 pub fn extract(path: &Path, content: &str) -> Result<(Vec<CodeChunk>, Vec<SymbolRecord>)> {
     let mut parser = Parser::new();
     parser.set_language(&LANGUAGE.into())?;
-    
-    let tree = parser.parse(content, None).ok_or_else(|| anyhow::anyhow!("Failed to parse Rust file"))?;
+
+    let tree = parser
+        .parse(content, None)
+        .ok_or_else(|| anyhow::anyhow!("Failed to parse Rust file"))?;
     let root_node = tree.root_node();
 
     let mut chunks = Vec::new();
@@ -29,7 +31,7 @@ pub fn extract(path: &Path, content: &str) -> Result<(Vec<CodeChunk>, Vec<Symbol
     while let Some(&(ref mat, capture_index)) = captures.next() {
         let capture = mat.captures[capture_index];
         let capture_name = query.capture_names()[capture.index as usize];
-        
+
         // We only care about the main nodes (func, struct, etc.), not the names (which are sub-nodes)
         if !["func", "struct", "enum", "trait", "impl"].contains(&capture_name) {
             continue;
@@ -39,9 +41,11 @@ pub fn extract(path: &Path, content: &str) -> Result<(Vec<CodeChunk>, Vec<Symbol
         let start_line = node.start_position().row + 1;
         let end_line = node.end_position().row + 1;
         let raw_content = node.utf8_text(content.as_bytes())?.to_string();
-        
+
         // Find the name capture for this match
-        let symbol_name = mat.captures.iter()
+        let symbol_name = mat
+            .captures
+            .iter()
             .find(|c| {
                 let name = query.capture_names()[c.index as usize];
                 name.ends_with("_name")
@@ -52,7 +56,7 @@ pub fn extract(path: &Path, content: &str) -> Result<(Vec<CodeChunk>, Vec<Symbol
 
         let file_path = path.to_string_lossy().replace('\\', "/");
         let symbol_id = format!("{}:{}:{}", capture_name, file_path, symbol_name);
-        
+
         symbols.push(SymbolRecord {
             symbol_id: symbol_id.clone(),
             symbol_name: symbol_name.clone(),

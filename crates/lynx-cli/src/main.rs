@@ -22,17 +22,11 @@ enum Commands {
         path: PathBuf,
     },
     /// Search the index
-    Search {
-        query: String,
-    },
+    Search { query: String },
     /// Resolve a symbol by name
-    Resolve {
-        name: String,
-    },
+    Resolve { name: String },
     /// Find related implementations
-    Related {
-        location: String,
-    },
+    Related { location: String },
 }
 
 #[tokio::main]
@@ -73,10 +67,7 @@ async fn main() -> Result<()> {
                 for result in results {
                     println!(
                         "[symbol] {}:{}-{} - {}",
-                        result.file_path,
-                        result.start_line,
-                        result.end_line,
-                        result.symbol_id
+                        result.file_path, result.start_line, result.end_line, result.symbol_id
                     );
                 }
             }

@@ -29,3 +29,5 @@ Desktop.ini
 
 *.log
 crash.dump
+.commit_suggest_history.json
+

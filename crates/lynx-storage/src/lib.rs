@@ -1,12 +1,12 @@
+pub mod cache;
 pub mod schema;
 pub mod tantivy;
-pub mod cache;
 
 use anyhow::Result;
+use cache::EmbeddingCache;
 use lynx_protocol::{CodeChunk, SymbolRecord};
 use std::path::Path;
 use std::sync::Mutex;
-use cache::EmbeddingCache;
 
 pub struct Storage {
     inner: tantivy::TantivyStorage,
@@ -35,7 +35,11 @@ impl Storage {
         self.inner.search_chunks(query, limit)
     }
 
-    pub fn search_chunks_with_scores(&self, query: &str, limit: usize) -> Result<Vec<(CodeChunk, f32)>> {
+    pub fn search_chunks_with_scores(
+        &self,
+        query: &str,
+        limit: usize,
+    ) -> Result<Vec<(CodeChunk, f32)>> {
         self.inner.search_chunks_with_scores(query, limit)
     }
 
@@ -55,7 +59,11 @@ impl Storage {
         cache.add_embeddings(records)
     }
 
-    pub fn vector_search(&self, query_embedding: &[f32], limit: usize) -> Result<Vec<(CodeChunk, f32)>> {
+    pub fn vector_search(
+        &self,
+        query_embedding: &[f32],
+        limit: usize,
+    ) -> Result<Vec<(CodeChunk, f32)>> {
         let cache = self
             .embedding_cache
             .lock()
@@ -63,7 +71,11 @@ impl Storage {
         Ok(cache.vector_search(query_embedding, limit))
     }
 
-    pub fn find_embedding_by_location(&self, file_path: &str, line: usize) -> Result<Option<EmbeddingRecord>> {
+    pub fn find_embedding_by_location(
+        &self,
+        file_path: &str,
+        line: usize,
+    ) -> Result<Option<EmbeddingRecord>> {
         let cache = self
             .embedding_cache
             .lock()

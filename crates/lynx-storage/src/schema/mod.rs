@@ -19,7 +19,7 @@ impl ChunkSchema {
         let end_line = schema_builder.add_u64_field("end_line", STORED);
         let content = schema_builder.add_text_field("content", TEXT | STORED);
         let symbols = schema_builder.add_text_field("symbols", TEXT | STORED);
-        
+
         Self {
             schema: schema_builder.build(),
             id,
@@ -29,6 +29,12 @@ impl ChunkSchema {
             content,
             symbols,
         }
+    }
+}
+
+impl Default for ChunkSchema {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -61,5 +67,11 @@ impl SymbolSchema {
             start_line,
             end_line,
         }
+    }
+}
+
+impl Default for SymbolSchema {
+    fn default() -> Self {
+        Self::new()
     }
 }
