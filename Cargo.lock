@@ -1596,82 +1596,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "lynx-common"
-version = "0.1.0"
-
-[[package]]
-name = "lynx-core"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "lynx-embed",
- "lynx-parser",
- "lynx-protocol",
- "lynx-storage",
- "serde",
- "tokio",
- "tracing",
- "tracing-subscriber",
- "walkdir",
-]
-
-[[package]]
-name = "lynx-embed"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "fastembed",
- "lynx-protocol",
-]
-
-[[package]]
-name = "lynx-mcp"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "lynx-core",
- "lynx-protocol",
- "serde",
- "serde_json",
- "tokio",
-]
-
-[[package]]
-name = "lynx-parser"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "blake3",
- "lynx-protocol",
- "tree-sitter",
- "tree-sitter-go",
- "tree-sitter-javascript",
- "tree-sitter-python",
- "tree-sitter-rust",
- "tree-sitter-typescript",
-]
-
-[[package]]
-name = "lynx-protocol"
-version = "0.1.0"
-dependencies = [
- "blake3",
- "serde",
-]
-
-[[package]]
-name = "lynx-storage"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "lynx-protocol",
- "serde",
- "serde_json",
- "tantivy",
-]
-
-[[package]]
 name = "lz4_flex"
 version = "0.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2153,10 +2077,86 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
- "lynx-core",
- "lynx-protocol",
+ "pizen-lynx-core",
+ "pizen-lynx-protocol",
  "tokio",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "pizen-lynx-common"
+version = "0.1.0"
+
+[[package]]
+name = "pizen-lynx-core"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "pizen-lynx-embed",
+ "pizen-lynx-parser",
+ "pizen-lynx-protocol",
+ "pizen-lynx-storage",
+ "serde",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "walkdir",
+]
+
+[[package]]
+name = "pizen-lynx-embed"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "fastembed",
+ "pizen-lynx-protocol",
+]
+
+[[package]]
+name = "pizen-lynx-mcp"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "pizen-lynx-core",
+ "pizen-lynx-protocol",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
+name = "pizen-lynx-parser"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "blake3",
+ "pizen-lynx-protocol",
+ "tree-sitter",
+ "tree-sitter-go",
+ "tree-sitter-javascript",
+ "tree-sitter-python",
+ "tree-sitter-rust",
+ "tree-sitter-typescript",
+]
+
+[[package]]
+name = "pizen-lynx-protocol"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "serde",
+]
+
+[[package]]
+name = "pizen-lynx-storage"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "pizen-lynx-protocol",
+ "serde",
+ "serde_json",
+ "tantivy",
 ]
 
 [[package]]

@@ -1,5 +1,5 @@
 [package]
-name = "lynx-embed"
+name = "pizen-lynx-embed"
 version = "0.1.0"
 edition = "2021"
 description = "Embedding support for Lynx."
@@ -11,4 +11,4 @@ homepage = { workspace = true }
 anyhow = "1.0.102"
 async-trait = "0.1.89"
 fastembed = "5.15.0"
-lynx-protocol = { version = "0.1.0", path = "../lynx-protocol" }
+lynx-protocol = { package = "pizen-lynx-protocol", version = "0.1.0", path = "../lynx-protocol" }

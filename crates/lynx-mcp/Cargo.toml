@@ -1,5 +1,5 @@
 [package]
-name = "lynx-mcp"
+name = "pizen-lynx-mcp"
 version = "0.1.0"
 edition = "2021"
 description = "Model context protocol integration for Lynx."
@@ -9,8 +9,8 @@ homepage = { workspace = true }
 
 [dependencies]
 anyhow = "1.0.102"
-lynx-core = { version = "0.1.0", path = "../lynx-core" }
-lynx-protocol = { version = "0.1.0", path = "../lynx-protocol" }
+lynx-core = { package = "pizen-lynx-core", version = "0.1.0", path = "../lynx-core" }
+lynx-protocol = { package = "pizen-lynx-protocol", version = "0.1.0", path = "../lynx-protocol" }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.145"
 tokio = { version = "1.52.3", features = ["full"] }

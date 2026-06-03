@@ -1,5 +1,5 @@
 [package]
-name = "lynx-parser"
+name = "pizen-lynx-parser"
 version = "0.1.0"
 edition = "2021"
 description = "Source code parser for Lynx."
@@ -10,7 +10,7 @@ homepage = { workspace = true }
 [dependencies]
 anyhow = "1.0.102"
 blake3 = "1.8.5"
-lynx-protocol = { version = "0.1.0", path = "../lynx-protocol" }
+lynx-protocol = { package = "pizen-lynx-protocol", version = "0.1.0", path = "../lynx-protocol" }
 tree-sitter = "0.26.9"
 tree-sitter-go = "0.25.0"
 tree-sitter-javascript = "0.25.0"

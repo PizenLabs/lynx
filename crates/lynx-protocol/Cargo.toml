@@ -1,5 +1,5 @@
 [package]
-name = "lynx-protocol"
+name = "pizen-lynx-protocol"
 version = "0.1.0"
 edition = "2021"
 description = "Protocol definitions for Lynx."
