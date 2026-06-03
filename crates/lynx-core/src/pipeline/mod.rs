@@ -30,6 +30,7 @@ impl<'a> SearchPipeline<'a> {
                         file_path: record.file_path,
                         start_line: record.start_line,
                         end_line: record.end_line,
+                        reasons: vec!["Exact symbol match".to_string()],
                     })
                     .collect());
             }

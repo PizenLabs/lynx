@@ -23,6 +23,16 @@ impl Storage {
         })
     }
 
+    pub fn clear(&self) -> Result<()> {
+        self.inner.clear()?;
+        let mut cache = self
+            .embedding_cache
+            .lock()
+            .map_err(|e| anyhow::anyhow!("Embedding cache lock poisoned: {}", e))?;
+        cache.clear()?;
+        Ok(())
+    }
+
     pub fn index_chunks(&self, chunks: &[CodeChunk]) -> Result<()> {
         self.inner.index_chunks(chunks)
     }

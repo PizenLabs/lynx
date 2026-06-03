@@ -21,9 +21,17 @@ enum Commands {
     Index {
         #[arg(default_value = ".")]
         path: PathBuf,
+        /// Include test, mock, generated files in indexing
+        #[arg(long, action = clap::ArgAction::SetTrue, default_value_t = false)]
+        include_tests: bool,
     },
     /// Search the index
-    Search { query: String },
+    Search {
+        query: String,
+        /// Include test, mock, generated files in search results
+        #[arg(long, action = clap::ArgAction::SetTrue, default_value_t = false)]
+        include_tests: bool,
+    },
     /// Resolve a symbol by name
     Resolve { name: String },
     /// Find related implementations
@@ -40,15 +48,23 @@ async fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
 
     let cli = Cli::parse();
-    let lynx = Lynx::new(&cli.storage_path).await?;
+    let mut lynx = Lynx::new(&cli.storage_path).await?;
 
     match cli.command {
-        Commands::Index { path } => {
+        Commands::Index {
+            path,
+            include_tests,
+        } => {
             println!("Indexing repository at {:?}", path);
+            lynx.set_include_tests(include_tests);
             lynx.index_repository(&path).await?;
             println!("Indexing complete.");
         }
-        Commands::Search { query } => {
+        Commands::Search {
+            query,
+            include_tests,
+        } => {
+            lynx.set_include_tests(include_tests);
             let results = lynx.search(&query).await?;
             if results.is_empty() {
                 println!("No results found.");
@@ -120,9 +136,38 @@ fn format_discovery(result: &lynx_protocol::DiscoveryResult) -> String {
     } else {
         format!("{}-{}", result.start_line, result.end_line)
     };
+
+    let percentage = (result.score * 3000.0).min(100.0);
+
+    let confidence = if percentage > 80.0 {
+        "High"
+    } else if percentage > 40.0 {
+        "Medium"
+    } else {
+        "Low"
+    };
+
+    let why_str = if result.reasons.is_empty() {
+        "".to_string()
+    } else {
+        let reasons_list: Vec<String> = result
+            .reasons
+            .iter()
+            .map(|r| format!("  - {}", r))
+            .collect();
+        format!("\n  Why:\n{}\n", reasons_list.join("\n"))
+    };
+
     format!(
-        "{}:{} │ {} ── {}",
-        result.file_path, lines, kind, symbol_name
+        "{}\n  {}\n\n  Confidence: {} ({:.0}%)\n{}\n  Symbol:\n  {}\n\n  File:\n  {}:{}\n",
+        kind.to_uppercase(),
+        symbol_name,
+        confidence,
+        percentage,
+        why_str,
+        result.symbol_id,
+        result.file_path,
+        lines
     )
 }
 

@@ -17,6 +17,7 @@ pub struct Lynx {
     parser: Parser,
     storage: Storage,
     embedder: EmbedderManager,
+    include_tests: bool,
 }
 
 impl Lynx {
@@ -29,11 +30,21 @@ impl Lynx {
             parser,
             storage,
             embedder,
+            include_tests: false,
         })
     }
 
+    pub fn set_include_tests(&mut self, include_tests: bool) {
+        self.include_tests = include_tests;
+    }
+
     pub async fn index_repository(&self, repo_path: &Path) -> Result<()> {
-        let mut indexer = indexing::Indexer::new(&self.parser, &self.storage, &self.embedder);
+        let mut indexer = indexing::Indexer::new(
+            &self.parser,
+            &self.storage,
+            &self.embedder,
+            self.include_tests,
+        );
         indexer.index_repository(repo_path).await
     }
 
@@ -52,6 +63,7 @@ impl Lynx {
                 file_path: record.file_path,
                 start_line: record.start_line,
                 end_line: record.end_line,
+                reasons: vec!["Exact symbol lookup".to_string()],
             })
             .collect())
     }
@@ -83,6 +95,7 @@ impl Lynx {
                 file_path: chunk.file_path,
                 start_line: chunk.start_line,
                 end_line: chunk.end_line,
+                reasons: vec!["Embedding similarity".to_string()],
             })
             .collect())
     }

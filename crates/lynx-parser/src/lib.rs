@@ -80,3 +80,71 @@ impl Parser {
         symbol_extraction::python::extract(path, content)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    #[test]
+    fn test_parse_go() {
+        let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let auth_go_path = manifest_dir.join("../../testdata/auth.go");
+        let content = std::fs::read_to_string(&auth_go_path).unwrap();
+        let parser = Parser::new();
+        let (chunks, symbols) = parser
+            .parse_file(&PathBuf::from("testdata/auth.go"), &content)
+            .unwrap();
+
+        println!("CHUNKS:");
+        for chunk in &chunks {
+            println!(
+                "  Chunk: {} {}-{} symbols: {:?}",
+                chunk.id, chunk.start_line, chunk.end_line, chunk.symbols_defined
+            );
+        }
+        println!("SYMBOLS:");
+        for symbol in &symbols {
+            println!("  Symbol ID: {}", symbol.symbol_id);
+            println!("  Symbol Name: {}", symbol.symbol_name);
+            println!("  File Path: {}", symbol.file_path);
+            println!("  Lines: {}-{}", symbol.start_line, symbol.end_line);
+        }
+
+        assert!(!symbols.is_empty());
+    }
+
+    #[test]
+    fn test_parse_rust() {
+        let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let lib_rs_path = manifest_dir.join("src/lib.rs");
+        let content = std::fs::read_to_string(&lib_rs_path).unwrap();
+        let parser = Parser::new();
+        let (chunks, symbols) = parser
+            .parse_file(&PathBuf::from("src/lib.rs"), &content)
+            .unwrap();
+
+        println!("RUST CHUNKS:");
+        for chunk in &chunks {
+            println!(
+                "  Chunk: {} {}-{} symbols: {:?}",
+                chunk.id, chunk.start_line, chunk.end_line, chunk.symbols_defined
+            );
+        }
+        println!("RUST SYMBOLS:");
+        for symbol in &symbols {
+            println!("  Symbol ID: {}", symbol.symbol_id);
+            println!("  Symbol Name: {}", symbol.symbol_name);
+            println!("  File Path: {}", symbol.file_path);
+            println!("  Lines: {}-{}", symbol.start_line, symbol.end_line);
+        }
+
+        assert!(!symbols.is_empty());
+        // Verify struct Parser is present
+        assert!(symbols.iter().any(|s| s.symbol_id == "struct:src:Parser"));
+        // Verify method new is present
+        assert!(symbols
+            .iter()
+            .any(|s| s.symbol_id == "method:src:Parser.new"));
+    }
+}

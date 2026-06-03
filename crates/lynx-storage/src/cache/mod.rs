@@ -70,6 +70,11 @@ impl EmbeddingCache {
         self.records.get(chunk_id)
     }
 
+    pub fn clear(&mut self) -> Result<()> {
+        self.records.clear();
+        self.persist()
+    }
+
     fn persist(&self) -> Result<()> {
         let mut records: Vec<&EmbeddingRecord> = self.records.values().collect();
         records.sort_by(|a, b| a.chunk.id.cmp(&b.chunk.id));

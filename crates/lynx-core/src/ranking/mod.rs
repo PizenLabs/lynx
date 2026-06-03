@@ -7,6 +7,7 @@ pub struct Ranker;
 struct ScoredChunk {
     chunk: CodeChunk,
     score: f32,
+    reasons: Vec<String>,
 }
 
 impl Ranker {
@@ -24,20 +25,28 @@ impl Ranker {
             let entry = scores.entry(chunk.id.clone()).or_insert(ScoredChunk {
                 chunk: chunk.clone(),
                 score: 0.0,
+                reasons: Vec::new(),
             });
             entry.score += alpha / (k + i as f32);
+            if !entry.reasons.contains(&"Lexical match".to_string()) {
+                entry.reasons.push("Lexical match".to_string());
+            }
         }
 
         for (i, (chunk, _score)) in semantic_results.into_iter().enumerate() {
             let entry = scores.entry(chunk.id.clone()).or_insert(ScoredChunk {
                 chunk: chunk.clone(),
                 score: 0.0,
+                reasons: Vec::new(),
             });
             entry.score += beta / (k + i as f32);
+            if !entry.reasons.contains(&"Semantic match".to_string()) {
+                entry.reasons.push("Semantic match".to_string());
+            }
         }
 
         let mut scored_chunks: Vec<ScoredChunk> = scores.into_values().collect();
-        apply_definition_boost(&mut scored_chunks);
+        apply_definition_boost(&mut scored_chunks, query);
         apply_identifier_boost(&mut scored_chunks, query);
         apply_noise_suppression(&mut scored_chunks);
         apply_file_coherence_boost(&mut scored_chunks);
@@ -61,15 +70,40 @@ impl Ranker {
                 file_path: scored.chunk.file_path,
                 start_line: scored.chunk.start_line,
                 end_line: scored.chunk.end_line,
+                reasons: scored.reasons,
             })
             .collect()
     }
 }
 
-fn apply_definition_boost(scored_chunks: &mut [ScoredChunk]) {
+fn is_definition_of_query(chunk: &CodeChunk, query: &str) -> bool {
+    let query_lower = query.to_lowercase();
+    let query_tokens: Vec<&str> = query_lower.split_whitespace().collect();
+
+    for symbol_id in &chunk.symbols_defined {
+        let symbol_name = symbol_id
+            .split(':')
+            .next_back()
+            .unwrap_or(symbol_id)
+            .to_lowercase();
+        if symbol_name == query_lower {
+            return true;
+        }
+        let parts: Vec<&str> = symbol_name.split('.').collect();
+        for part in parts {
+            if query_tokens.contains(&part) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+fn apply_definition_boost(scored_chunks: &mut [ScoredChunk], query: &str) {
     for scored in scored_chunks {
-        if !scored.chunk.symbols_defined.is_empty() {
+        if is_definition_of_query(&scored.chunk, query) {
             scored.score *= 1.5;
+            scored.reasons.push("Definition boost".to_string());
         }
     }
 }
@@ -100,31 +134,46 @@ fn apply_identifier_boost(scored_chunks: &mut [ScoredChunk], query: &str) {
 
         if boosted {
             scored.score *= 1.2;
+            scored.reasons.push("Identifier match boost".to_string());
         }
     }
 }
 
 fn apply_noise_suppression(scored_chunks: &mut [ScoredChunk]) {
-    let noise_markers = [
-        "node_modules",
-        "vendor",
-        "dist",
-        "build",
-        "generated",
-        "testdata",
-        "fixtures",
-        "examples",
-        "target",
-        ".pb.go",
-    ];
-
     for scored in scored_chunks {
         let path_lower = scored.chunk.file_path.to_lowercase();
-        if noise_markers
-            .iter()
-            .any(|marker| path_lower.contains(marker))
-        {
+
+        if path_lower.contains("vendor") || path_lower.contains("node_modules") {
+            scored.score *= 0.01;
+            scored
+                .reasons
+                .push("Vendor/node_modules penalty".to_string());
+        } else if path_lower.contains("generated") || path_lower.contains(".pb.go") {
             scored.score *= 0.05;
+            scored.reasons.push("Generated code penalty".to_string());
+        } else if path_lower.ends_with("_test.go")
+            || path_lower.ends_with(".test.ts")
+            || path_lower.ends_with("_test.rs")
+            || path_lower.ends_with("_test.py")
+            || path_lower.contains("testdata")
+        {
+            scored.score *= 0.10;
+            scored.reasons.push("Test/testdata penalty".to_string());
+        } else if path_lower.contains("mock") || path_lower.contains("test") {
+            scored.score *= 0.20;
+            scored
+                .reasons
+                .push("Mock/Test directory penalty".to_string());
+        } else if path_lower.contains("fixtures")
+            || path_lower.contains("examples")
+            || path_lower.contains("target")
+            || path_lower.contains("build")
+            || path_lower.contains("dist")
+        {
+            scored.score *= 0.10;
+            scored
+                .reasons
+                .push("Fixtures/Examples/Build penalty".to_string());
         }
     }
 }
@@ -139,6 +188,7 @@ fn apply_file_coherence_boost(scored_chunks: &mut [ScoredChunk]) {
         if let Some(count) = counts.get(&scored.chunk.file_path) {
             if *count > 1 {
                 scored.score *= 1.0 + ((*count as f32 - 1.0) * 0.05);
+                scored.reasons.push("File coherence boost".to_string());
             }
         }
     }

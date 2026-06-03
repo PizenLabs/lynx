@@ -4,6 +4,7 @@ use lynx_protocol::{CodeChunk, SymbolRecord};
 use std::path::Path;
 use tantivy::collector::TopDocs;
 use tantivy::query::{BooleanQuery, Occur, TermQuery};
+use tantivy::schema::TantivyDocument;
 use tantivy::schema::{IndexRecordOption, Term, Value};
 use tantivy::{doc, query::QueryParser, DocAddress, Index, IndexWriter, ReloadPolicy};
 
@@ -42,8 +43,23 @@ impl TantivyStorage {
         })
     }
 
+    pub fn clear(&self) -> Result<()> {
+        // Use the default TantivyDocument type for the writer.
+        let mut chunk_writer: IndexWriter<tantivy::schema::TantivyDocument> =
+            self.chunk_index.writer(10_000_000)?;
+        chunk_writer.delete_all_documents()?;
+        chunk_writer.commit()?;
+
+        let mut symbol_writer: IndexWriter<tantivy::schema::TantivyDocument> =
+            self.symbol_index.writer(10_000_000)?;
+        symbol_writer.delete_all_documents()?;
+        symbol_writer.commit()?;
+
+        Ok(())
+    }
+
     pub fn index_chunks(&self, chunks: &[CodeChunk]) -> Result<()> {
-        let mut writer: IndexWriter = self.chunk_index.writer(50_000_000)?;
+        let mut writer: IndexWriter<TantivyDocument> = self.chunk_index.writer(50_000_000)?;
         for chunk in chunks {
             writer.add_document(doc!(
                 self.chunk_schema.id => chunk.id.clone(),
@@ -59,7 +75,7 @@ impl TantivyStorage {
     }
 
     pub fn index_symbols(&self, symbols: &[SymbolRecord]) -> Result<()> {
-        let mut writer: IndexWriter = self.symbol_index.writer(50_000_000)?;
+        let mut writer: IndexWriter<TantivyDocument> = self.symbol_index.writer(50_000_000)?;
         for symbol in symbols {
             writer.add_document(doc!(
                 self.symbol_schema.symbol_id => symbol.symbol_id.clone(),

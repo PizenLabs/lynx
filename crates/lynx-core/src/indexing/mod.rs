@@ -9,14 +9,21 @@ pub struct Indexer<'a> {
     parser: &'a Parser,
     storage: &'a Storage,
     embedder: &'a EmbedderManager,
+    include_tests: bool,
 }
 
 impl<'a> Indexer<'a> {
-    pub fn new(parser: &'a Parser, storage: &'a Storage, embedder: &'a EmbedderManager) -> Self {
+    pub fn new(
+        parser: &'a Parser,
+        storage: &'a Storage,
+        embedder: &'a EmbedderManager,
+        include_tests: bool,
+    ) -> Self {
         Self {
             parser,
             storage,
             embedder,
+            include_tests,
         }
     }
 
@@ -63,11 +70,20 @@ impl<'a> Indexer<'a> {
 
     fn should_skip(&self, path: &Path) -> bool {
         let path_str = path.to_string_lossy();
-        path_str.contains("/.git/")
+        let base_skip = path_str.contains("/.git/")
             || path_str.contains("/node_modules/")
             || path_str.contains("/vendor/")
             || path_str.contains("/target/")
             || path_str.contains("/build/")
-            || path_str.contains("/dist/")
+            || path_str.contains("/dist/");
+        if base_skip {
+            return true;
+        }
+        if !self.include_tests {
+            return path_str.contains("/test/")
+                || path_str.contains("/mock/")
+                || path_str.contains("/generated/");
+        }
+        false
     }
 }

@@ -26,4 +26,6 @@ pub struct DiscoveryResult {
     pub file_path: String,
     pub start_line: usize,
     pub end_line: usize,
+    #[serde(default)]
+    pub reasons: Vec<String>,
 }
