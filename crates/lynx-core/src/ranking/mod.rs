@@ -63,7 +63,7 @@ impl Ranker {
             });
         }
 
-        apply_noise_suppression(&mut scored_chunks, include_tests);
+        apply_noise_suppression(&mut scored_chunks);
 
         apply_definition_boost(&mut scored_chunks, query);
         apply_identifier_boost(&mut scored_chunks, query);
@@ -165,44 +165,42 @@ fn apply_identifier_boost(scored_chunks: &mut [ScoredChunk], query: &str) {
     }
 }
 
-fn apply_noise_suppression(scored_chunks: &mut [ScoredChunk], include_tests: bool) {
-    if !include_tests {
-        return;
-    }
+fn apply_noise_suppression(scored_chunks: &mut [ScoredChunk]) {
     for scored in scored_chunks {
         let path_lower = scored.chunk.file_path.to_lowercase();
+        let mut penalty = 1.0;
+        let mut reason = "";
 
         if path_lower.contains("vendor") || path_lower.contains("node_modules") {
-            scored.score *= 0.01;
-            scored
-                .reasons
-                .push("Vendor/node_modules penalty".to_string());
+            penalty = 0.01;
+            reason = "Vendor/node_modules penalty";
         } else if path_lower.contains("generated") || path_lower.contains(".pb.go") {
-            scored.score *= 0.05;
-            scored.reasons.push("Generated code penalty".to_string());
+            penalty = 0.05;
+            reason = "Generated code penalty";
         } else if path_lower.ends_with("_test.go")
             || path_lower.ends_with(".test.ts")
             || path_lower.ends_with("_test.rs")
             || path_lower.ends_with("_test.py")
             || path_lower.contains("testdata")
         {
-            scored.score *= if include_tests { 0.10 } else { 0.01 };
-            scored.reasons.push("Test/testdata penalty".to_string());
+            penalty = 0.10;
+            reason = "Test/testdata penalty";
         } else if path_lower.contains("mock") || path_lower.contains("test") {
-            scored.score *= if include_tests { 0.20 } else { 0.05 };
-            scored
-                .reasons
-                .push("Mock/Test directory penalty".to_string());
+            penalty = 0.20;
+            reason = "Mock/Test directory penalty";
         } else if path_lower.contains("fixtures")
             || path_lower.contains("examples")
             || path_lower.contains("target")
             || path_lower.contains("build")
             || path_lower.contains("dist")
         {
-            scored.score *= 0.10;
-            scored
-                .reasons
-                .push("Fixtures/Examples/Build penalty".to_string());
+            penalty = 0.10;
+            reason = "Fixtures/Examples/Build penalty";
+        }
+
+        if penalty < 1.0 {
+            scored.score *= penalty;
+            scored.reasons.push(reason.to_string());
         }
     }
 }
