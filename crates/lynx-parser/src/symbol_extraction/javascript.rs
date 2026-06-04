@@ -26,15 +26,15 @@ pub fn extract(path: &Path, content: &str) -> Result<(Vec<CodeChunk>, Vec<Symbol
     let mut cursor = QueryCursor::new();
     let mut captures = cursor.captures(&query, root_node, content.as_bytes());
 
-    let parent_dir = path
+    let module_path = path
         .parent()
         .unwrap_or_else(|| Path::new(""))
         .to_string_lossy()
         .replace('\\', "/");
-    let parent_dir = if parent_dir.is_empty() {
-        ".".to_string()
+    let module_path = if module_path.is_empty() || module_path == "." {
+        "crate".to_string()
     } else {
-        parent_dir
+        module_path
     };
 
     while let Some(&(ref mat, capture_index)) = captures.next() {
@@ -57,7 +57,7 @@ pub fn extract(path: &Path, content: &str) -> Result<(Vec<CodeChunk>, Vec<Symbol
             };
 
         let file_path = path.to_string_lossy().replace('\\', "/");
-        let symbol_id = format!("{}:{}:{}", kind, parent_dir, symbol_name);
+        let symbol_id = format!("{}:{}:{}", kind, module_path, symbol_name);
 
         symbols.push(SymbolRecord {
             symbol_id: symbol_id.clone(),

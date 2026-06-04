@@ -16,6 +16,18 @@ pub fn extract(path: &Path, content: &str) -> Result<(Vec<CodeChunk>, Vec<Symbol
     let mut chunks = Vec::new();
     let mut symbols = Vec::new();
 
+    let module_path = path
+        .parent()
+        .unwrap_or_else(|| Path::new(""))
+        .to_string_lossy()
+        .replace('\\', "/")
+        .replace('/', "::");
+    let module_path = if module_path.is_empty() || module_path == "." {
+        "crate".to_string()
+    } else {
+        module_path
+    };
+
     let query_str = r#"
         (function_item name: (identifier) @func_name) @func
         (struct_item name: (type_identifier) @struct_name) @struct
@@ -26,17 +38,6 @@ pub fn extract(path: &Path, content: &str) -> Result<(Vec<CodeChunk>, Vec<Symbol
     let query = Query::new(&LANGUAGE.into(), query_str)?;
     let mut cursor = QueryCursor::new();
     let mut captures = cursor.captures(&query, root_node, content.as_bytes());
-
-    let parent_dir = path
-        .parent()
-        .unwrap_or_else(|| Path::new(""))
-        .to_string_lossy()
-        .replace('\\', "/");
-    let parent_dir = if parent_dir.is_empty() {
-        ".".to_string()
-    } else {
-        parent_dir
-    };
 
     while let Some(&(ref mat, capture_index)) = captures.next() {
         let capture = mat.captures[capture_index];
@@ -58,7 +59,7 @@ pub fn extract(path: &Path, content: &str) -> Result<(Vec<CodeChunk>, Vec<Symbol
             };
 
         let file_path = path.to_string_lossy().replace('\\', "/");
-        let symbol_id = format!("{}:{}:{}", kind, parent_dir, symbol_name);
+        let symbol_id = format!("{}:{}:{}", kind, module_path, symbol_name);
 
         symbols.push(SymbolRecord {
             symbol_id: symbol_id.clone(),
@@ -161,35 +162,55 @@ fn get_impl_or_trait_container(
 ) -> Option<(String, String)> {
     let mut current = node.parent();
     while let Some(parent) = current {
-        if parent.kind() == "impl_item" {
-            if let Some(type_name) = find_impl_type_name(parent, content) {
-                return Some(("method".to_string(), type_name));
-            }
-        } else if parent.kind() == "trait_item" {
-            if let Some(name_node) = parent.child_by_field_name("name") {
-                if let Ok(text) = name_node.utf8_text(content) {
-                    return Some(("method".to_string(), text.to_string()));
+        match parent.kind() {
+            "impl_item" => {
+                if let Some(type_node) = parent.child_by_field_name("type") {
+                    if let Some(type_name) = extract_type_name(type_node, content) {
+                        return Some(("method".to_string(), type_name));
+                    }
                 }
             }
+            "trait_item" => {
+                if let Some(name_node) = parent.child_by_field_name("name") {
+                    if let Ok(text) = name_node.utf8_text(content) {
+                        return Some(("method".to_string(), text.to_string()));
+                    }
+                }
+            }
+            _ => {}
         }
         current = parent.parent();
     }
     None
 }
 
-fn find_impl_type_name(node: tree_sitter::Node, content: &[u8]) -> Option<String> {
-    if let Some(type_node) = node.child_by_field_name("type") {
-        if let Ok(text) = type_node.utf8_text(content) {
-            return Some(text.to_string());
+fn extract_type_name(node: tree_sitter::Node, content: &[u8]) -> Option<String> {
+    match node.kind() {
+        "type_identifier" | "primitive_type" | "identifier" => {
+            node.utf8_text(content).ok().map(|s| s.to_string())
         }
-    }
-    let mut cursor = node.walk();
-    for child in node.named_children(&mut cursor) {
-        if child.kind() == "type_identifier" {
-            if let Ok(text) = child.utf8_text(content) {
-                return Some(text.to_string());
+        "generic_type" => {
+            if let Some(inner) = node.child_by_field_name("type") {
+                extract_type_name(inner, content)
+            } else {
+                None
             }
         }
+        "pointer_type" | "reference_type" => {
+            if let Some(inner) = node.child_by_field_name("type") {
+                extract_type_name(inner, content)
+            } else {
+                None
+            }
+        }
+        _ => {
+            let mut cursor = node.walk();
+            for child in node.named_children(&mut cursor) {
+                if let Some(name) = extract_type_name(child, content) {
+                    return Some(name);
+                }
+            }
+            None
+        }
     }
-    None
 }

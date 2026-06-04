@@ -137,11 +137,13 @@ fn format_discovery(result: &lynx_protocol::DiscoveryResult) -> String {
         format!("{}-{}", result.start_line, result.end_line)
     };
 
-    let percentage = (result.score * 3000.0).min(100.0);
+    // Normalize score to 0-100% for display
+    // BM25 + Vector scores can be small, so we use a scaling factor
+    let percentage = (result.score * 100.0).min(100.0);
 
-    let confidence = if percentage > 80.0 {
+    let confidence = if percentage > 85.0 {
         "High"
-    } else if percentage > 40.0 {
+    } else if percentage > 50.0 {
         "Medium"
     } else {
         "Low"
@@ -180,6 +182,15 @@ fn split_symbol_id(symbol_id: &str, file_path: &str) -> (String, String) {
         return ("file".to_string(), display_name.to_string());
     }
 
+    // New format: kind:package:SymbolName or kind:package:Receiver.MethodName
+    let parts: Vec<&str> = symbol_id.split(':').collect();
+    if parts.len() >= 3 {
+        let kind = parts[0];
+        let symbol_name = parts.last().unwrap_or(&"");
+        return (kind.to_string(), symbol_name.to_string());
+    }
+
+    // Fallback for old format or unexpected formats
     let mut tail = symbol_id.rsplitn(2, ':');
     let symbol_name = tail.next().unwrap_or(symbol_id);
     if let Some(head) = tail.next() {

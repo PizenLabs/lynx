@@ -10,7 +10,7 @@ impl QueryType {
         match self {
             QueryType::Symbol => (0.95, 0.05),
             QueryType::Hybrid => (0.70, 0.30),
-            QueryType::NaturalLanguage => (0.20, 0.80),
+            QueryType::NaturalLanguage => (0.10, 0.90),
         }
     }
 }
@@ -34,6 +34,11 @@ pub fn classify_query(query: &str) -> QueryType {
 
     if !has_whitespace {
         return QueryType::Symbol;
+    }
+
+    // If it has whitespace but no symbol marker, it's likely a natural language intent query
+    if !has_symbol_marker {
+        return QueryType::NaturalLanguage;
     }
 
     let has_identifier = trimmed.split_whitespace().any(is_identifier_like);

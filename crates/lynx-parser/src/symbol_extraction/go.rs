@@ -16,6 +16,17 @@ pub fn extract(path: &Path, content: &str) -> Result<(Vec<CodeChunk>, Vec<Symbol
     let mut chunks = Vec::new();
     let mut symbols = Vec::new();
 
+    let module_path = path
+        .parent()
+        .unwrap_or_else(|| Path::new(""))
+        .to_string_lossy()
+        .replace('\\', "/");
+    let module_path = if module_path.is_empty() || module_path == "." {
+        "crate".to_string()
+    } else {
+        module_path
+    };
+
     let query_str = r#"
         (function_declaration name: (identifier) @func_name) @func
         (method_declaration) @method
@@ -25,17 +36,6 @@ pub fn extract(path: &Path, content: &str) -> Result<(Vec<CodeChunk>, Vec<Symbol
     let query = Query::new(&LANGUAGE.into(), query_str)?;
     let mut cursor = QueryCursor::new();
     let mut captures = cursor.captures(&query, root_node, content.as_bytes());
-
-    let parent_dir = path
-        .parent()
-        .unwrap_or_else(|| Path::new(""))
-        .to_string_lossy()
-        .replace('\\', "/");
-    let parent_dir = if parent_dir.is_empty() {
-        ".".to_string()
-    } else {
-        parent_dir
-    };
 
     while let Some(&(ref mat, capture_index)) = captures.next() {
         let capture = mat.captures[capture_index];
@@ -57,7 +57,7 @@ pub fn extract(path: &Path, content: &str) -> Result<(Vec<CodeChunk>, Vec<Symbol
             };
 
         let file_path = path.to_string_lossy().replace('\\', "/");
-        let symbol_id = format!("{}:{}:{}", kind, parent_dir, symbol_name);
+        let symbol_id = format!("{}:{}:{}", kind, module_path, symbol_name);
 
         symbols.push(SymbolRecord {
             symbol_id: symbol_id.clone(),
@@ -110,7 +110,8 @@ fn extract_go_symbol_info(
             for child in node.named_children(&mut cursor) {
                 match child.kind() {
                     "parameter_list" if receiver_type.is_none() => {
-                        receiver_type = find_type_identifier(child, content);
+                        // receiver is in the first parameter list
+                        receiver_type = find_receiver_type(child, content);
                     }
                     "field_identifier" => {
                         method_name = child.utf8_text(content).ok().map(|s| s.to_string());
@@ -155,7 +156,9 @@ fn extract_go_symbol_info(
             let mut cursor = node.walk();
             for child in node.named_children(&mut cursor) {
                 if child.kind() == "type_spec" {
-                    kind = determine_type_kind(child);
+                    if let Some(type_node) = child.child_by_field_name("type") {
+                        kind = determine_type_kind(type_node);
+                    }
                     break;
                 }
             }
@@ -166,31 +169,43 @@ fn extract_go_symbol_info(
 }
 
 fn determine_type_kind(node: tree_sitter::Node) -> String {
-    if node.kind() == "interface_type" {
-        return "interface".to_string();
+    match node.kind() {
+        "interface_type" => "interface".to_string(),
+        "struct_type" => "struct".to_string(),
+        _ => "type".to_string(),
     }
-    if node.kind() == "struct_type" {
-        return "struct".to_string();
-    }
-    let mut cursor = node.walk();
-    for child in node.children(&mut cursor) {
-        let k = determine_type_kind(child);
-        if k != "type" {
-            return k;
-        }
-    }
-    "type".to_string()
 }
 
-fn find_type_identifier(node: tree_sitter::Node, content: &[u8]) -> Option<String> {
-    if node.kind() == "type_identifier" {
-        return node.utf8_text(content).ok().map(|s| s.to_string());
-    }
+fn find_receiver_type(node: tree_sitter::Node, content: &[u8]) -> Option<String> {
     let mut cursor = node.walk();
-    for child in node.children(&mut cursor) {
-        if let Some(name) = find_type_identifier(child, content) {
-            return Some(name);
+    for child in node.named_children(&mut cursor) {
+        if child.kind() == "parameter_declaration" {
+            if let Some(type_node) = child.child_by_field_name("type") {
+                return extract_type_identifier(type_node, content);
+            }
         }
     }
     None
+}
+
+fn extract_type_identifier(node: tree_sitter::Node, content: &[u8]) -> Option<String> {
+    match node.kind() {
+        "type_identifier" => node.utf8_text(content).ok().map(|s| s.to_string()),
+        "pointer_type" => {
+            if let Some(inner) = node.child_by_field_name("content") {
+                extract_type_identifier(inner, content)
+            } else {
+                None
+            }
+        }
+        _ => {
+            let mut cursor = node.walk();
+            for child in node.children(&mut cursor) {
+                if let Some(name) = extract_type_identifier(child, content) {
+                    return Some(name);
+                }
+            }
+            None
+        }
+    }
 }

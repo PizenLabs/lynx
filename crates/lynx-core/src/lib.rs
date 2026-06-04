@@ -49,7 +49,8 @@ impl Lynx {
     }
 
     pub async fn search(&self, query: &str) -> Result<Vec<lynx_protocol::DiscoveryResult>> {
-        let pipeline = pipeline::SearchPipeline::new(&self.storage, &self.embedder);
+        let pipeline =
+            pipeline::SearchPipeline::new(&self.storage, &self.embedder, self.include_tests);
         pipeline.search(query).await
     }
 

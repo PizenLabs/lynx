@@ -9,11 +9,16 @@ use lynx_storage::Storage;
 pub struct SearchPipeline<'a> {
     storage: &'a Storage,
     embedder: &'a EmbedderManager,
+    include_tests: bool,
 }
 
 impl<'a> SearchPipeline<'a> {
-    pub fn new(storage: &'a Storage, embedder: &'a EmbedderManager) -> Self {
-        Self { storage, embedder }
+    pub fn new(storage: &'a Storage, embedder: &'a EmbedderManager, include_tests: bool) -> Self {
+        Self {
+            storage,
+            embedder,
+            include_tests,
+        }
     }
 
     pub async fn search(&self, query: &str) -> Result<Vec<DiscoveryResult>> {
@@ -48,6 +53,7 @@ impl<'a> SearchPipeline<'a> {
             lexical_results,
             semantic_results,
             60.0,
+            self.include_tests,
         ))
     }
 }

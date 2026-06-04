@@ -17,6 +17,7 @@ impl Ranker {
         lexical_results: Vec<(CodeChunk, f32)>,
         semantic_results: Vec<(CodeChunk, f32)>,
         k: f32,
+        include_tests: bool,
     ) -> Vec<DiscoveryResult> {
         let (alpha, beta) = query_type.weights();
         let mut scores: HashMap<String, ScoredChunk> = HashMap::new();
@@ -46,9 +47,31 @@ impl Ranker {
         }
 
         let mut scored_chunks: Vec<ScoredChunk> = scores.into_values().collect();
+
+        // Noise suppression and filtering
+        if !include_tests {
+            scored_chunks.retain(|scored| {
+                let path = scored.chunk.file_path.to_lowercase();
+                !(path.contains("vendor")
+                    || path.contains("node_modules")
+                    || path.contains("mock")
+                    || path.contains("test")
+                    || path.contains("generated")
+                    || path.contains(".pb.go")
+                    || path.contains("fixtures")
+                    || path.contains("examples"))
+            });
+        }
+        
+        apply_noise_suppression(&mut scored_chunks, include_tests);
+
         apply_definition_boost(&mut scored_chunks, query);
         apply_identifier_boost(&mut scored_chunks, query);
-        apply_noise_suppression(&mut scored_chunks);
+
+        // Apply concept-specific boost for natural language queries
+        if let QueryType::NaturalLanguage = query_type {
+            apply_concept_boost(&mut scored_chunks, query);
+        }
         apply_file_coherence_boost(&mut scored_chunks);
 
         scored_chunks.sort_by(|a, b| {
@@ -86,11 +109,14 @@ fn is_definition_of_query(chunk: &CodeChunk, query: &str) -> bool {
             .next_back()
             .unwrap_or(symbol_id)
             .to_lowercase();
+
         if symbol_name == query_lower {
             return true;
         }
-        let parts: Vec<&str> = symbol_name.split('.').collect();
-        for part in parts {
+
+        // Handle Method.Name
+        let name_parts: Vec<&str> = symbol_name.split('.').collect();
+        for part in name_parts {
             if query_tokens.contains(&part) {
                 return true;
             }
@@ -102,7 +128,7 @@ fn is_definition_of_query(chunk: &CodeChunk, query: &str) -> bool {
 fn apply_definition_boost(scored_chunks: &mut [ScoredChunk], query: &str) {
     for scored in scored_chunks {
         if is_definition_of_query(&scored.chunk, query) {
-            scored.score *= 1.5;
+            scored.score *= 2.0; // Increased boost from 1.5 to 2.0
             scored.reasons.push("Definition boost".to_string());
         }
     }
@@ -133,13 +159,16 @@ fn apply_identifier_boost(scored_chunks: &mut [ScoredChunk], query: &str) {
         }
 
         if boosted {
-            scored.score *= 1.2;
+            scored.score *= 1.3; // Increased boost from 1.2 to 1.3
             scored.reasons.push("Identifier match boost".to_string());
         }
     }
 }
 
-fn apply_noise_suppression(scored_chunks: &mut [ScoredChunk]) {
+fn apply_noise_suppression(scored_chunks: &mut [ScoredChunk], include_tests: bool) {
+    if !include_tests {
+        return;
+    }
     for scored in scored_chunks {
         let path_lower = scored.chunk.file_path.to_lowercase();
 
@@ -157,10 +186,10 @@ fn apply_noise_suppression(scored_chunks: &mut [ScoredChunk]) {
             || path_lower.ends_with("_test.py")
             || path_lower.contains("testdata")
         {
-            scored.score *= 0.10;
+            scored.score *= if include_tests { 0.10 } else { 0.01 };
             scored.reasons.push("Test/testdata penalty".to_string());
         } else if path_lower.contains("mock") || path_lower.contains("test") {
-            scored.score *= 0.20;
+            scored.score *= if include_tests { 0.20 } else { 0.05 };
             scored
                 .reasons
                 .push("Mock/Test directory penalty".to_string());
@@ -190,6 +219,34 @@ fn apply_file_coherence_boost(scored_chunks: &mut [ScoredChunk]) {
                 scored.score *= 1.0 + ((*count as f32 - 1.0) * 0.05);
                 scored.reasons.push("File coherence boost".to_string());
             }
+        }
+    }
+}
+
+fn apply_concept_boost(scored_chunks: &mut [ScoredChunk], query: &str) {
+    // Boost chunks for conceptual matches when query is natural language.
+    let query_tokens: Vec<String> = query.split_whitespace().map(|t| t.to_lowercase()).collect();
+    for scored in scored_chunks.iter_mut() {
+        // Only consider chunks that have defined symbols.
+        if scored.chunk.symbols_defined.is_empty() {
+            continue;
+        }
+        // If any query token appears as a substring of a symbol name, boost strongly.
+        let mut boosted = false;
+        for symbol_id in &scored.chunk.symbols_defined {
+            let symbol_name = symbol_id.split(':').next_back().unwrap_or(symbol_id);
+            let symbol_name_lower = symbol_name.to_lowercase();
+            if query_tokens
+                .iter()
+                .any(|tok| symbol_name_lower.contains(tok))
+            {
+                boosted = true;
+                break;
+            }
+        }
+        if boosted {
+            scored.score *= 1.5; // Increased from 1.15 to 1.5 for stronger intent signal
+            scored.reasons.push("Concept match boost".to_string());
         }
     }
 }
