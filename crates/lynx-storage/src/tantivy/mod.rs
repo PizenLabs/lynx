@@ -185,6 +185,7 @@ impl TantivyStorage {
                     .and_then(|v| v.as_str())
                     .unwrap_or_default()
                     .to_string(),
+                symbol_type: lynx_protocol::SymbolType::Definition,
                 file_path: retrieved_doc
                     .get_first(self.symbol_schema.file_path)
                     .and_then(|v| v.as_str())
@@ -243,6 +244,7 @@ impl TantivyStorage {
                     .and_then(|v| v.as_str())
                     .unwrap_or_default()
                     .to_string(),
+                symbol_type: lynx_protocol::SymbolType::Definition,
                 file_path: retrieved_doc
                     .get_first(self.symbol_schema.file_path)
                     .and_then(|v| v.as_str())

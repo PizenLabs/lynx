@@ -62,6 +62,7 @@ pub fn extract(path: &Path, content: &str) -> Result<(Vec<CodeChunk>, Vec<Symbol
         symbols.push(SymbolRecord {
             symbol_id: symbol_id.clone(),
             symbol_name: symbol_name.clone(),
+            symbol_type: lynx_protocol::SymbolType::Definition,
             file_path: file_path.clone(),
             start_line,
             end_line,
@@ -106,18 +107,12 @@ fn extract_go_symbol_info(
             let mut receiver_type = None;
             let mut method_name = None;
 
-            let mut cursor = node.walk();
-            for child in node.named_children(&mut cursor) {
-                match child.kind() {
-                    "parameter_list" if receiver_type.is_none() => {
-                        // receiver is in the first parameter list
-                        receiver_type = find_receiver_type(child, content);
-                    }
-                    "field_identifier" => {
-                        method_name = child.utf8_text(content).ok().map(|s| s.to_string());
-                    }
-                    _ => {}
-                }
+            if let Some(receiver_node) = node.child_by_field_name("receiver") {
+                receiver_type = find_receiver_type(receiver_node, content);
+            }
+
+            if let Some(name_node) = node.child_by_field_name("name") {
+                method_name = name_node.utf8_text(content).ok().map(|s| s.to_string());
             }
 
             let method_name = method_name.or_else(|| {
@@ -192,11 +187,13 @@ fn extract_type_identifier(node: tree_sitter::Node, content: &[u8]) -> Option<St
     match node.kind() {
         "type_identifier" => node.utf8_text(content).ok().map(|s| s.to_string()),
         "pointer_type" => {
-            if let Some(inner) = node.child_by_field_name("content") {
-                extract_type_identifier(inner, content)
-            } else {
-                None
+            let mut cursor = node.walk();
+            for child in node.children(&mut cursor) {
+                if let Some(name) = extract_type_identifier(child, content) {
+                    return Some(name);
+                }
             }
+            None
         }
         _ => {
             let mut cursor = node.walk();

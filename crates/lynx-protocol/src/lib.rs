@@ -1,9 +1,16 @@
 use serde::{Deserialize, Serialize};
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub enum SymbolType {
+    Definition,
+    Reference,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SymbolRecord {
     pub symbol_id: String,
     pub symbol_name: String,
+    pub symbol_type: SymbolType,
     pub file_path: String,
     pub start_line: usize,
     pub end_line: usize,

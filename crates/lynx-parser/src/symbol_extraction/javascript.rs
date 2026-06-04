@@ -62,6 +62,7 @@ pub fn extract(path: &Path, content: &str) -> Result<(Vec<CodeChunk>, Vec<Symbol
         symbols.push(SymbolRecord {
             symbol_id: symbol_id.clone(),
             symbol_name: symbol_name.clone(),
+            symbol_type: lynx_protocol::SymbolType::Definition,
             file_path: file_path.clone(),
             start_line,
             end_line,
