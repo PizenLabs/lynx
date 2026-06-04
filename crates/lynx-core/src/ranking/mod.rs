@@ -62,7 +62,7 @@ impl Ranker {
                     || path.contains("examples"))
             });
         }
-        
+
         apply_noise_suppression(&mut scored_chunks, include_tests);
 
         apply_definition_boost(&mut scored_chunks, query);
