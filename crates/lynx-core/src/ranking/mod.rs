@@ -105,8 +105,12 @@ impl Ranker {
 fn apply_intent_boost(scored_chunks: &mut [ScoredChunk]) {
     for scored in scored_chunks.iter_mut() {
         for symbol_id in &scored.chunk.symbols_defined {
-            let symbol_name = symbol_id.split(':').next_back().unwrap_or(symbol_id).to_lowercase();
-            
+            let symbol_name = symbol_id
+                .split(':')
+                .next_back()
+                .unwrap_or(symbol_id)
+                .to_lowercase();
+
             // Heuristic boost for potential service entry points, handlers, and public interfaces
             if symbol_name.contains("service")
                 || symbol_name.contains("handler")
@@ -116,7 +120,9 @@ fn apply_intent_boost(scored_chunks: &mut [ScoredChunk]) {
                 || symbol_name.contains("api")
             {
                 scored.score *= 2.5;
-                scored.reasons.push("Intent-based service/handler boost".to_string());
+                scored
+                    .reasons
+                    .push("Intent-based service/handler boost".to_string());
             }
         }
     }

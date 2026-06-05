@@ -36,6 +36,8 @@ enum Commands {
     Resolve { name: String },
     /// Find related implementations
     Related { location: String },
+    /// Discover and visualize control flow using Lea
+    Flow { query: String },
     #[command(hide = true)]
     Init {
         #[arg(default_value = ".")]
@@ -93,6 +95,21 @@ async fn main() -> Result<()> {
                 for result in results {
                     println!("{}", format_discovery(&result));
                 }
+            }
+        }
+        Commands::Flow { query } => {
+            let results = lynx.search(&query).await?;
+            if let Some(top_result) = results.first() {
+                println!("Flow for: {}", top_result.symbol_id);
+                let status = Command::new("lea")
+                    .arg("flow")
+                    .arg(&top_result.symbol_id)
+                    .status()?;
+                if !status.success() {
+                    return Err(anyhow::anyhow!("lea flow failed with status {}", status));
+                }
+            } else {
+                println!("No results found for query: {}", query);
             }
         }
         Commands::Init { path } => {
