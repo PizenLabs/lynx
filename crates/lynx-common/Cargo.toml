@@ -1,6 +1,6 @@
 [package]
 name = "pizen-lynx-common"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 description = "Shared utilities and types for the Lynx project."
 license = "MIT"

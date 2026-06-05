@@ -1,6 +1,8 @@
-use crate::classifier::QueryType;
+use crate::classifier::QueryIntent;
 use lynx_protocol::{CodeChunk, DiscoveryResult};
 use std::collections::HashMap;
+
+pub const MIN_CONFIDENCE_THRESHOLD: f32 = 0.15;
 
 pub struct Ranker;
 
@@ -13,15 +15,16 @@ struct ScoredChunk {
 impl Ranker {
     pub fn rank(
         query: &str,
-        query_type: QueryType,
+        query_intent: QueryIntent,
         lexical_results: Vec<(CodeChunk, f32)>,
         semantic_results: Vec<(CodeChunk, f32)>,
         k: f32,
         include_tests: bool,
     ) -> Vec<DiscoveryResult> {
-        let (alpha, beta) = query_type.weights();
+        let (alpha, beta) = query_intent.weights();
         let mut scores: HashMap<String, ScoredChunk> = HashMap::new();
 
+        // Process lexical candidate hits into the unified scoring tracker
         for (i, (chunk, _score)) in lexical_results.into_iter().enumerate() {
             let entry = scores.entry(chunk.id.clone()).or_insert(ScoredChunk {
                 chunk: chunk.clone(),
@@ -34,6 +37,7 @@ impl Ranker {
             }
         }
 
+        // Process semantic candidate hits into the unified scoring tracker
         for (i, (chunk, _score)) in semantic_results.into_iter().enumerate() {
             let entry = scores.entry(chunk.id.clone()).or_insert(ScoredChunk {
                 chunk: chunk.clone(),
@@ -48,7 +52,7 @@ impl Ranker {
 
         let mut scored_chunks: Vec<ScoredChunk> = scores.into_values().collect();
 
-        // Noise suppression and filtering
+        // Noise suppression and active workspace path filtering
         if !include_tests {
             scored_chunks.retain(|scored| {
                 let path = scored.chunk.file_path.to_lowercase();
@@ -63,24 +67,47 @@ impl Ranker {
             });
         }
 
+        // Apply baseline system infrastructure penalties
         apply_noise_suppression(&mut scored_chunks);
 
+        // Apply targeted syntax structure match boosts
         apply_definition_boost(&mut scored_chunks, query);
         apply_identifier_boost(&mut scored_chunks, query);
 
-        // Apply concept-specific boost for natural language queries
-        if let QueryType::NaturalLanguage = query_type {
-            apply_concept_boost(&mut scored_chunks, query);
-            apply_intent_boost(&mut scored_chunks);
+        // Apply intent-specific heuristic transformations
+        match query_intent {
+            QueryIntent::Semantic | QueryIntent::Flow | QueryIntent::Architecture => {
+                apply_concept_boost(&mut scored_chunks, query);
+                apply_intent_boost(&mut scored_chunks);
+                
+                // CRITICAL FIX: Explicitly invoke generic boilerplate mitigation 
+                // to aggressively suppress infrastructure symbols (main, new, init)
+                apply_generic_symbol_penalty(&mut scored_chunks);
+            }
+            _ => {}
         }
+        
+        // Execute structural package/file grouping reinforcement
         apply_file_coherence_boost(&mut scored_chunks);
 
+        // Normalize computed RRF scores and modifiers to a stable [0.0, 1.0] confidence scale
+        let max_rrf = 1.0 / k;
+        for scored in scored_chunks.iter_mut() {
+            // Calibrate score distribution against theoretical max boundaries and cap at 1.0
+            scored.score = (scored.score / (max_rrf * 2.0)).min(1.0);
+        }
+
+        // In-place filtration to discard low-confidence noise rows
+        scored_chunks.retain(|scored| scored.score >= MIN_CONFIDENCE_THRESHOLD);
+
+        // Sort descending based on final normalized confidence
         scored_chunks.sort_by(|a, b| {
             b.score
                 .partial_cmp(&a.score)
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
 
+        // Map internal structural trackers back to external protocol data transfer objects (DTOs)
         scored_chunks
             .into_iter()
             .map(|scored| DiscoveryResult {
@@ -99,8 +126,6 @@ impl Ranker {
             .collect()
     }
 }
-
-// ...
 
 fn apply_intent_boost(scored_chunks: &mut [ScoredChunk]) {
     for scored in scored_chunks.iter_mut() {
@@ -143,7 +168,7 @@ fn is_definition_of_query(chunk: &CodeChunk, query: &str) -> bool {
             return true;
         }
 
-        // Handle Method.Name
+        // Parse token components separated by object/module access tokens
         let name_parts: Vec<&str> = symbol_name.split('.').collect();
         for part in name_parts {
             if query_tokens.contains(&part) {
@@ -157,7 +182,7 @@ fn is_definition_of_query(chunk: &CodeChunk, query: &str) -> bool {
 fn apply_definition_boost(scored_chunks: &mut [ScoredChunk], query: &str) {
     for scored in scored_chunks {
         if is_definition_of_query(&scored.chunk, query) {
-            scored.score *= 2.0; // Increased boost from 1.5 to 2.0
+            scored.score *= 2.0;
             scored.reasons.push("Definition boost".to_string());
         }
     }
@@ -188,7 +213,7 @@ fn apply_identifier_boost(scored_chunks: &mut [ScoredChunk], query: &str) {
         }
 
         if boosted {
-            scored.score *= 1.3; // Increased boost from 1.2 to 1.3
+            scored.score *= 1.3;
             scored.reasons.push("Identifier match boost".to_string());
         }
     }
@@ -251,14 +276,11 @@ fn apply_file_coherence_boost(scored_chunks: &mut [ScoredChunk]) {
 }
 
 fn apply_concept_boost(scored_chunks: &mut [ScoredChunk], query: &str) {
-    // Boost chunks for conceptual matches when query is natural language.
     let query_tokens: Vec<String> = query.split_whitespace().map(|t| t.to_lowercase()).collect();
     for scored in scored_chunks.iter_mut() {
-        // Only consider chunks that have defined symbols.
         if scored.chunk.symbols_defined.is_empty() {
             continue;
         }
-        // If any query token appears as a substring of a symbol name, boost strongly.
         let mut boosted = false;
         for symbol_id in &scored.chunk.symbols_defined {
             let symbol_name = symbol_id.split(':').next_back().unwrap_or(symbol_id);
@@ -272,8 +294,27 @@ fn apply_concept_boost(scored_chunks: &mut [ScoredChunk], query: &str) {
             }
         }
         if boosted {
-            scored.score *= 1.5; // Increased from 1.15 to 1.5 for stronger intent signal
+            scored.score *= 1.5;
             scored.reasons.push("Concept match boost".to_string());
+        }
+    }
+}
+
+fn apply_generic_symbol_penalty(scored_chunks: &mut [ScoredChunk]) {
+    let generic_symbols = ["main", "new", "init", "test", "helper", "util", "config"];
+    for scored in scored_chunks.iter_mut() {
+        for symbol_id in &scored.chunk.symbols_defined {
+            let symbol_name = symbol_id
+                .split(':')
+                .next_back()
+                .unwrap_or(symbol_id)
+                .to_lowercase();
+
+            if generic_symbols.contains(&symbol_name.as_str()) {
+                scored.score *= 0.2; // Severely suppress boilerplate identifiers
+                scored.reasons.push("Generic symbol penalty".to_string());
+                break; // Penalty applied once per unified code chunk
+            }
         }
     }
 }

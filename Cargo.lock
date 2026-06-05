@@ -2073,7 +2073,7 @@ checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
 
 [[package]]
 name = "pizen-lynx"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "clap",
@@ -2085,11 +2085,11 @@ dependencies = [
 
 [[package]]
 name = "pizen-lynx-common"
-version = "0.1.0"
+version = "0.1.1"
 
 [[package]]
 name = "pizen-lynx-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "pizen-lynx-embed",
@@ -2105,7 +2105,7 @@ dependencies = [
 
 [[package]]
 name = "pizen-lynx-embed"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2115,7 +2115,7 @@ dependencies = [
 
 [[package]]
 name = "pizen-lynx-mcp"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "pizen-lynx-core",
