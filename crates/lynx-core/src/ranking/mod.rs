@@ -79,14 +79,14 @@ impl Ranker {
             QueryIntent::Semantic | QueryIntent::Flow | QueryIntent::Architecture => {
                 apply_concept_boost(&mut scored_chunks, query);
                 apply_intent_boost(&mut scored_chunks);
-                
-                // CRITICAL FIX: Explicitly invoke generic boilerplate mitigation 
+
+                // CRITICAL FIX: Explicitly invoke generic boilerplate mitigation
                 // to aggressively suppress infrastructure symbols (main, new, init)
                 apply_generic_symbol_penalty(&mut scored_chunks);
             }
             _ => {}
         }
-        
+
         // Execute structural package/file grouping reinforcement
         apply_file_coherence_boost(&mut scored_chunks);
 

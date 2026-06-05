@@ -35,7 +35,9 @@ impl<'a> SearchPipeline<'a> {
         if lower_query.contains("auth") || lower_query.contains("authentication") {
             expanded.push_str(" login jwt token middleware authorize verify access session identity permission oauth");
         } else if lower_query.contains("database") || lower_query.contains("db") {
-            expanded.push_str(" repository gorm sql transaction query storage client connection migration schema");
+            expanded.push_str(
+                " repository gorm sql transaction query storage client connection migration schema",
+            );
         } else if lower_query.contains("api") || lower_query.contains("endpoint") {
             expanded.push_str(" controller handler route request response gateway payload");
         } else if lower_query.contains("cache") {
@@ -71,9 +73,7 @@ impl<'a> SearchPipeline<'a> {
 
         // Step 3: Apply query transformation/expansion if dealing with structural flows
         let processed_query = match query_intent {
-            QueryIntent::Flow | QueryIntent::Architecture => {
-                self.expand_architectural_query(query)
-            }
+            QueryIntent::Flow | QueryIntent::Architecture => self.expand_architectural_query(query),
             _ => query.to_string(),
         };
 
