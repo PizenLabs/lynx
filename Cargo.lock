@@ -2127,7 +2127,7 @@ dependencies = [
 
 [[package]]
 name = "pizen-lynx-parser"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "blake3",
@@ -2142,7 +2142,7 @@ dependencies = [
 
 [[package]]
 name = "pizen-lynx-protocol"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "blake3",
  "serde",
@@ -2150,7 +2150,7 @@ dependencies = [
 
 [[package]]
 name = "pizen-lynx-storage"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "pizen-lynx-protocol",

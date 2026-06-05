@@ -1,20 +1,22 @@
 [package]
 name = "pizen-lynx-core"
-version = "0.1.1"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
 description = "Core engine for the Lynx platform."
-license = "MIT"
-repository = { workspace = true }
-homepage = { workspace = true }
 
 [dependencies]
 anyhow = "1.0.102"
-lynx-embed = { package = "pizen-lynx-embed", version = "0.1.0", path = "../lynx-embed" }
-lynx-parser = { package = "pizen-lynx-parser", version = "0.1.0", path = "../lynx-parser" }
-lynx-protocol = { package = "pizen-lynx-protocol", version = "0.1.0", path = "../lynx-protocol" }
-lynx-storage = { package = "pizen-lynx-storage", version = "0.1.0", path = "../lynx-storage" }
 serde = { version = "1.0.228", features = ["derive"] }
 tokio = { version = "1.52.3", features = ["full"] }
 tracing = "0.1.44"
 tracing-subscriber = "0.3.23"
 walkdir = "2.5.0"
+
+lynx-embed.workspace = true
+lynx-parser.workspace = true
+lynx-protocol.workspace = true
+lynx-storage.workspace = true

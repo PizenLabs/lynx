@@ -1,11 +1,12 @@
 [package]
 name = "pizen-lynx-protocol"
-version = "0.1.0"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
 description = "Protocol definitions for Lynx."
-license = "MIT"
-repository = { workspace = true }
-homepage = { workspace = true }
 
 [dependencies]
 blake3 = "1.8.5"
