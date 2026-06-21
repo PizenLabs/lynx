@@ -19,8 +19,11 @@ struct Cli {
     command: Commands,
 }
 
+// Add version subcommand
+
 #[derive(Subcommand)]
 enum Commands {
+    /// Show version information
     /// Index a repository
     Index {
         #[arg(default_value = ".")]
@@ -44,6 +47,8 @@ enum Commands {
     Flow { query: String },
     /// Start MCP (Model Context Protocol) server over stdio
     Mcp,
+    /// Show version information
+    Version,
     #[command(hide = true)]
     Init {
         #[arg(default_value = ".")]
@@ -118,6 +123,9 @@ async fn main() -> Result<()> {
                 println!("No results found for query: {}", query);
             }
         }
+        Commands::Version => {
+            println!("lx version {}", env!("CARGO_PKG_VERSION"));
+        }
         Commands::Mcp => {
             let storage_dir = find_lynx_dir()
                 .map(|root| root.join(".lynx"))
@@ -131,47 +139,62 @@ async fn main() -> Result<()> {
 
             loop {
                 tokio::select! {
-                    line = lines.next_line() => {
-                        match line {
-                            Ok(Some(line)) => {
-                                let line = line.trim().to_string();
-                                if line.is_empty() {
-                                    continue;
-                                }
+                                    line = lines.next_line() => {
+                                        match line {
+                                            Ok(Some(line)) => {
+                                                let line = line.trim().to_string();
+                                                if line.is_empty() {
+                                                    continue;
+                                                }
 
-                                let request: McpRequest = match serde_json::from_str(&line) {
-                                    Ok(request) => request,
-                                    Err(err) => {
-                                        let response = json!({"error": err.to_string()});
-                                        let mut buf = serde_json::to_string(&response)?;
-                                        buf.push('\n');
-                                        let _ = stdout.write_all(buf.as_bytes()).await;
-                                        let _ = stdout.flush().await;
-                                        continue;
+                let raw: serde_json::Value = match serde_json::from_str(&line) {
+                                                Ok(v) => v,
+                                                Err(err) => {
+                                                    let response = json!({"jsonrpc": "2.0", "id": null, "error": {"code": -32700, "message": "Parse error", "data": err.to_string()}});
+                                                    let mut buf = serde_json::to_string(&response)?;
+                                                    buf.push('\n');
+                                                    let _ = stdout.write_all(buf.as_bytes()).await;
+                                                    let _ = stdout.flush().await;
+                                                    continue;
+                                                }
+                                            };
+                                            let request_id = raw.get("id").cloned();
+                                            let request: McpRequest = match serde_json::from_value(raw) {
+                                                Ok(r) => r,
+                                                Err(err) => {
+                                                    let response = json!({"jsonrpc": "2.0", "id": request_id, "error": {"code": -32600, "message": "Invalid Request", "data": err.to_string()}});
+                                                    let mut buf = serde_json::to_string(&response)?;
+                                                    buf.push('\n');
+                                                    let _ = stdout.write_all(buf.as_bytes()).await;
+                                                    let _ = stdout.flush().await;
+                                                    continue;
+                                                }
+                                            };
+
+                                                let response = handle_mcp_request(&lynx, request, request_id).await;
+                                                if response.is_null() {
+                                                    continue;
+                                                }
+                                                let mut buf = serde_json::to_string(&response)?;
+                                                buf.push('\n');
+                                                if let Err(e) = stdout.write_all(buf.as_bytes()).await {
+                                                    eprintln!("write error: {}", e);
+                                                    break;
+                                                }
+                                                if let Err(e) = stdout.flush().await {
+                                                    eprintln!("flush error: {}", e);
+                                                    break;
+                                                }
+                                            }
+                                            Ok(None) => break,
+                                            Err(e) => {
+                                                eprintln!("stdin error: {}", e);
+                                                break;
+                                            }
+                                        }
                                     }
-                                };
-
-                                let response = handle_mcp_request(&lynx, request).await;
-                                let mut buf = serde_json::to_string(&response)?;
-                                buf.push('\n');
-                                if let Err(e) = stdout.write_all(buf.as_bytes()).await {
-                                    eprintln!("write error: {}", e);
-                                    break;
+                                    _ = future::pending::<()>() => {}
                                 }
-                                if let Err(e) = stdout.flush().await {
-                                    eprintln!("flush error: {}", e);
-                                    break;
-                                }
-                            }
-                            Ok(None) => break,
-                            Err(e) => {
-                                eprintln!("stdin error: {}", e);
-                                break;
-                            }
-                        }
-                    }
-                    _ = future::pending::<()>() => {}
-                }
             }
         }
         Commands::Init { path } => {
@@ -297,8 +320,72 @@ fn find_lynx_dir() -> Option<PathBuf> {
     }
 }
 
-async fn handle_mcp_request(lynx: &Lynx, request: McpRequest) -> serde_json::Value {
+async fn handle_mcp_request(
+    lynx: &Lynx,
+    request: McpRequest,
+    id: Option<serde_json::Value>,
+) -> serde_json::Value {
+    let id = match id {
+        Some(id) => id,
+        None => return serde_json::Value::Null,
+    };
+
     match request.method.as_str() {
+        "initialize" => {
+            json!({"jsonrpc": "2.0", "id": id, "result": {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {
+                    "tools": {}
+                },
+                "serverInfo": {
+                    "name": "lynx-mcp",
+                    "version": env!("CARGO_PKG_VERSION")
+                }
+            }})
+        }
+        "notifications/initialized" => {
+            serde_json::Value::Null
+        }
+        "tools/list" => {
+            json!({"jsonrpc": "2.0", "id": id, "result": {
+                "tools": [
+                    {
+                        "name": "search",
+                        "description": "Search the codebase for relevant code",
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {
+                                "query": {"type": "string", "description": "Search query"}
+                            },
+                            "required": ["query"]
+                        }
+                    },
+                    {
+                        "name": "resolve_symbol",
+                        "description": "Resolve a symbol by name within the codebase",
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {
+                                "name": {"type": "string", "description": "Symbol name"}
+                            },
+                            "required": ["name"]
+                        }
+                    },
+                    {
+                        "name": "find_related",
+                        "description": "Find related implementations across the codebase",
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {
+                                "file": {"type": "string", "description": "File path"},
+                                "line": {"type": "number", "description": "Line number"}
+                            },
+                            "required": ["file", "line"]
+                        }
+                    }
+                ]
+            }})
+        }
         "search" => {
             let query = request
                 .params
@@ -308,10 +395,14 @@ async fn handle_mcp_request(lynx: &Lynx, request: McpRequest) -> serde_json::Val
 
             match query {
                 Some(query) => match lynx.search(query).await {
-                    Ok(results) => json!({"result": results}),
-                    Err(err) => json!({"error": err.to_string()}),
+                    Ok(results) => json!({"jsonrpc": "2.0", "id": id, "result": results}),
+                    Err(err) => {
+                        json!({"jsonrpc": "2.0", "id": id, "error": {"code": -32603, "message": err.to_string()}})
+                    }
                 },
-                None => json!({"error": "Missing query parameter"}),
+                None => {
+                    json!({"jsonrpc": "2.0", "id": id, "error": {"code": -32602, "message": "Missing query parameter"}})
+                }
             }
         }
         "resolve_symbol" => {
@@ -323,10 +414,14 @@ async fn handle_mcp_request(lynx: &Lynx, request: McpRequest) -> serde_json::Val
 
             match name {
                 Some(name) => match lynx.resolve_symbol(name).await {
-                    Ok(results) => json!({"result": results}),
-                    Err(err) => json!({"error": err.to_string()}),
+                    Ok(results) => json!({"jsonrpc": "2.0", "id": id, "result": results}),
+                    Err(err) => {
+                        json!({"jsonrpc": "2.0", "id": id, "error": {"code": -32603, "message": err.to_string()}})
+                    }
                 },
-                None => json!({"error": "Missing name parameter"}),
+                None => {
+                    json!({"jsonrpc": "2.0", "id": id, "error": {"code": -32602, "message": "Missing name parameter"}})
+                }
             }
         }
         "find_related" => {
@@ -344,19 +439,27 @@ async fn handle_mcp_request(lynx: &Lynx, request: McpRequest) -> serde_json::Val
             match (file_path, line) {
                 (Some(file_path), Some(line)) => {
                     match lynx.find_related(file_path, line as usize).await {
-                        Ok(results) => json!({"result": results}),
-                        Err(err) => json!({"error": err.to_string()}),
+                        Ok(results) => json!({"jsonrpc": "2.0", "id": id, "result": results}),
+                        Err(err) => {
+                            json!({"jsonrpc": "2.0", "id": id, "error": {"code": -32603, "message": err.to_string()}})
+                        }
                     }
                 }
-                _ => json!({"error": "Missing file or line parameter"}),
+                _ => {
+                    json!({"jsonrpc": "2.0", "id": id, "error": {"code": -32602, "message": "Missing file or line parameter"}})
+                }
             }
         }
-        _ => json!({"error": "Unknown method"}),
+        _ => {
+            json!({"jsonrpc": "2.0", "id": id, "error": {"code": -32601, "message": "Method not found"}})
+        }
     }
 }
 
 #[derive(Deserialize)]
 struct McpRequest {
+    #[allow(dead_code)]
+    id: Option<serde_json::Value>,
     method: String,
     params: Option<serde_json::Value>,
 }
