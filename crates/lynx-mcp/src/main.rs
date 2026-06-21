@@ -1,9 +1,10 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use lynx_core::Lynx;
 use serde::Deserialize;
 use serde_json::json;
-use std::io::{self, BufRead, Write};
+use std::future;
 use std::path::PathBuf;
+use tokio::io::{self, AsyncBufReadExt, AsyncWriteExt, BufReader};
 
 #[derive(Debug, Deserialize)]
 struct Request {
@@ -11,34 +12,94 @@ struct Request {
     params: Option<serde_json::Value>,
 }
 
+fn find_lynx_dir() -> Option<PathBuf> {
+    let mut current = std::env::current_dir().ok()?;
+    loop {
+        if current.join(".lynx").is_dir() {
+            return Some(current);
+        }
+        if !current.pop() {
+            return None;
+        }
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let storage_path = std::env::args()
         .nth(1)
         .map(PathBuf::from)
+        .or_else(find_lynx_dir)
         .unwrap_or_else(|| PathBuf::from(".lynx"));
 
-    let lynx = Lynx::new(&storage_path).await?;
-
-    let stdin = io::stdin();
-    let mut stdout = io::stdout();
-
-    for line in stdin.lock().lines() {
-        let line = line?;
-        if line.trim().is_empty() {
-            continue;
+    let storage_dir = if storage_path.is_relative() {
+        if storage_path.as_os_str() == ".lynx" {
+            // Default .lynx — try to resolve relative to project root
+            find_lynx_dir()
+                .map(|root| root.join(".lynx"))
+                .unwrap_or(storage_path)
+        } else {
+            storage_path
         }
+    } else {
+        storage_path
+    };
 
-        let request: Request = match serde_json::from_str(&line) {
-            Ok(request) => request,
-            Err(err) => {
-                writeln!(stdout, "{}", json!({"error": err.to_string()}))?;
-                continue;
+    let lynx = Lynx::new(&storage_dir)
+        .await
+        .with_context(|| format!("Failed to initialize Lynx at {:?}", storage_dir))?;
+
+    let stdin = BufReader::new(io::stdin());
+    let mut stdout = io::stdout();
+    let mut lines = stdin.lines();
+
+    loop {
+        tokio::select! {
+            line = lines.next_line() => {
+                match line {
+                    Ok(Some(line)) => {
+                        let line = line.trim().to_string();
+                        if line.is_empty() {
+                            continue;
+                        }
+
+                        let request: Request = match serde_json::from_str(&line) {
+                            Ok(request) => request,
+                            Err(err) => {
+                                let response = json!({"error": err.to_string()});
+                                let mut buf = serde_json::to_string(&response)?;
+                                buf.push('\n');
+                                let _ = stdout.write_all(buf.as_bytes()).await;
+                                let _ = stdout.flush().await;
+                                continue;
+                            }
+                        };
+
+                        let response = handle_request(&lynx, request).await;
+                        let mut buf = serde_json::to_string(&response)?;
+                        buf.push('\n');
+                        if let Err(e) = stdout.write_all(buf.as_bytes()).await {
+                            eprintln!("write error: {}", e);
+                            break;
+                        }
+                        if let Err(e) = stdout.flush().await {
+                            eprintln!("flush error: {}", e);
+                            break;
+                        }
+                    }
+                    Ok(None) => {
+                        break;
+                    }
+                    Err(e) => {
+                        eprintln!("stdin error: {}", e);
+                        break;
+                    }
+                }
             }
-        };
-
-        let response = handle_request(&lynx, request).await;
-        writeln!(stdout, "{}", response)?;
+            // Keep the async runtime alive even during idle periods
+            // Prevents premature process exit on some MCP clients
+            _ = future::pending::<()>() => {}
+        }
     }
 
     Ok(())

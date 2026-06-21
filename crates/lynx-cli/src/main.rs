@@ -1,8 +1,12 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use lynx_core::Lynx;
+use serde::Deserialize;
+use serde_json::json;
+use std::future;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use tokio::io::{self, AsyncBufReadExt, AsyncWriteExt, BufReader};
 
 #[derive(Parser)]
 #[command(name = "lx")]
@@ -38,6 +42,8 @@ enum Commands {
     Related { location: String },
     /// Discover and visualize control flow using Lea
     Flow { query: String },
+    /// Start MCP (Model Context Protocol) server over stdio
+    Mcp,
     #[command(hide = true)]
     Init {
         #[arg(default_value = ".")]
@@ -110,6 +116,62 @@ async fn main() -> Result<()> {
                 }
             } else {
                 println!("No results found for query: {}", query);
+            }
+        }
+        Commands::Mcp => {
+            let storage_dir = find_lynx_dir()
+                .map(|root| root.join(".lynx"))
+                .unwrap_or_else(|| cli.storage_path.clone());
+
+            let lynx = Lynx::new(&storage_dir).await?;
+
+            let stdin = BufReader::new(io::stdin());
+            let mut stdout = io::stdout();
+            let mut lines = stdin.lines();
+
+            loop {
+                tokio::select! {
+                    line = lines.next_line() => {
+                        match line {
+                            Ok(Some(line)) => {
+                                let line = line.trim().to_string();
+                                if line.is_empty() {
+                                    continue;
+                                }
+
+                                let request: McpRequest = match serde_json::from_str(&line) {
+                                    Ok(request) => request,
+                                    Err(err) => {
+                                        let response = json!({"error": err.to_string()});
+                                        let mut buf = serde_json::to_string(&response)?;
+                                        buf.push('\n');
+                                        let _ = stdout.write_all(buf.as_bytes()).await;
+                                        let _ = stdout.flush().await;
+                                        continue;
+                                    }
+                                };
+
+                                let response = handle_mcp_request(&lynx, request).await;
+                                let mut buf = serde_json::to_string(&response)?;
+                                buf.push('\n');
+                                if let Err(e) = stdout.write_all(buf.as_bytes()).await {
+                                    eprintln!("write error: {}", e);
+                                    break;
+                                }
+                                if let Err(e) = stdout.flush().await {
+                                    eprintln!("flush error: {}", e);
+                                    break;
+                                }
+                            }
+                            Ok(None) => break,
+                            Err(e) => {
+                                eprintln!("stdin error: {}", e);
+                                break;
+                            }
+                        }
+                    }
+                    _ = future::pending::<()>() => {}
+                }
             }
         }
         Commands::Init { path } => {
@@ -221,4 +283,80 @@ fn split_symbol_id(symbol_id: &str, file_path: &str) -> (String, String) {
         .and_then(|name| name.to_str())
         .unwrap_or(symbol_id);
     ("symbol".to_string(), fallback.to_string())
+}
+
+fn find_lynx_dir() -> Option<PathBuf> {
+    let mut current = std::env::current_dir().ok()?;
+    loop {
+        if current.join(".lynx").is_dir() {
+            return Some(current);
+        }
+        if !current.pop() {
+            return None;
+        }
+    }
+}
+
+async fn handle_mcp_request(lynx: &Lynx, request: McpRequest) -> serde_json::Value {
+    match request.method.as_str() {
+        "search" => {
+            let query = request
+                .params
+                .as_ref()
+                .and_then(|value| value.get("query"))
+                .and_then(|value| value.as_str());
+
+            match query {
+                Some(query) => match lynx.search(query).await {
+                    Ok(results) => json!({"result": results}),
+                    Err(err) => json!({"error": err.to_string()}),
+                },
+                None => json!({"error": "Missing query parameter"}),
+            }
+        }
+        "resolve_symbol" => {
+            let name = request
+                .params
+                .as_ref()
+                .and_then(|value| value.get("name"))
+                .and_then(|value| value.as_str());
+
+            match name {
+                Some(name) => match lynx.resolve_symbol(name).await {
+                    Ok(results) => json!({"result": results}),
+                    Err(err) => json!({"error": err.to_string()}),
+                },
+                None => json!({"error": "Missing name parameter"}),
+            }
+        }
+        "find_related" => {
+            let file_path = request
+                .params
+                .as_ref()
+                .and_then(|value| value.get("file"))
+                .and_then(|value| value.as_str());
+            let line = request
+                .params
+                .as_ref()
+                .and_then(|value| value.get("line"))
+                .and_then(|value| value.as_u64());
+
+            match (file_path, line) {
+                (Some(file_path), Some(line)) => {
+                    match lynx.find_related(file_path, line as usize).await {
+                        Ok(results) => json!({"result": results}),
+                        Err(err) => json!({"error": err.to_string()}),
+                    }
+                }
+                _ => json!({"error": "Missing file or line parameter"}),
+            }
+        }
+        _ => json!({"error": "Unknown method"}),
+    }
+}
+
+#[derive(Deserialize)]
+struct McpRequest {
+    method: String,
+    params: Option<serde_json::Value>,
 }
