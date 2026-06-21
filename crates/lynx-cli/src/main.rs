@@ -343,9 +343,7 @@ async fn handle_mcp_request(
                 }
             }})
         }
-        "notifications/initialized" => {
-            serde_json::Value::Null
-        }
+        "notifications/initialized" => serde_json::Value::Null,
         "tools/list" => {
             json!({"jsonrpc": "2.0", "id": id, "result": {
                 "tools": [
