@@ -19,139 +19,201 @@
  **Lynx discovers. Lea reasons.**
 
 [Features](#features) •
-[Architecture](#architecture-high-level) •
+[Ecosystem & Architecture](#ecosystem--architecture) •
+[Design Principles](#design-principles) •
 [Installation](#installation) •
-[Usage](#usage) •
-[MCP Server](#mcp-server-json-lines) •
+[CLI Usage](#cli-usage) •
+[MCP Server](#mcp-server) •
 [Repository Layout](#repository-layout) •
 [Contributing](#contributing)
 
 </div>
 
-
 ## Features
 
-- **Symbol-first discovery** with stable, deterministic identifiers.
-- **Hybrid retrieval**: BM25 + semantic embeddings with Reciprocal Rank Fusion (RRF).
-- **Local-first, CPU-first** design with no cloud or GPU dependency.
-- **Tree-sitter parsing** for structured symbol extraction and chunking.
-- **Minimal MCP interface**: `search`, `resolve_symbol`, `find_related`.
+- **Symbol-first discovery** with stable, deterministic identifiers rather than fragile text snippets.
+- **Multilingual Support**: Tree-sitter parsing for structured symbol extraction and syntax-aware chunking:
+  - **Rust** (`.rs`)
+  - **Go** (`.go`)
+  - **TypeScript / TSX** (`.ts`, `.tsx`)
+  - **JavaScript / JSX** (`.js`, `.jsx`)
+  - **Python** (`.py`)
+- **Hybrid Retrieval**: Integrates **BM25 lexical search** (via Tantivy) with **semantic vector search** (via FastEmbed utilizing `bge-small-en-v1.5`) using **Reciprocal Rank Fusion (RRF)** for optimal relevance.
+- **Local-first, CPU-first**: Zero cloud or GPU dependencies. Operates entirely offline with high-performance local indexing.
+- **Heuristic Signal Boosting**:
+  - *Definition Boost*: Prioritizes symbol definitions over code references (1.5x score multiplier).
+  - *Noise Suppression*: Filters and penalizes mock, test, generated, and vendor code automatically.
+- **Integrations**: Supports a minimal stdio **Model Context Protocol (MCP) server** and integrates natively with the **Lea** reasoning layer.
 
-## Architecture (High Level)
+---
 
+## Ecosystem & Architecture
+
+Lynx sits at the absolute beginning of the AI-native developer pipeline. It converts human queries or vague agent intents into exact coordinates in a repository, passing them off to reasoning engines like Lea for structural analysis.
+
+```mermaid
+graph TD
+    Query[Human Request / Agent Query]
+    Sub1[BM25 Search]
+    Sub2[Vector Embeddings Search]
+    RRF[Reciprocal Rank Fusion]
+    Heuristics[Heuristic Boosting / Definition & Noise Filters]
+    Coordinates[Precise Symbol Coordinates]
+    Lea[Lea Reasoning Engine]
+    Agent[Downstream Developer Agent]
+
+    Query --> |Classify & Tokenize| Sub1
+    Query --> |Generate Embedding| Sub2
+    Sub1 --> RRF
+    Sub2 --> RRF
+    RRF --> Heuristics
+    Heuristics --> Coordinates
+    Coordinates --> |Deterministic Symbol IDs| Lea
+    Lea --> |Structural Analysis / Impact Radius| Agent
 ```
-Human Request
-     │
-     ▼
-    Lynx  (Discovery)
-     │
-     ▼
-  Symbol IDs
-     │
-     ▼
-    Lea  (Reasoning)
-```
 
-## Tech Stack
+---
 
-- **Rust** (core)
-- **Tantivy** (BM25 indexing)
-- **Tree-sitter** (parsing + chunking)
-- **FastEmbed** (local embeddings)
-- **Serde** (serialization)
+## Design Principles
+
+1. **Discovery Only**: Lynx does not perform reasoning, dependency analyses, or calculate impact radius. Its sole job is to answer: *"Where is this concept located?"*
+2. **Speed First**: Cold queries execute in `< 100ms`, while cached or warm queries resolve in `< 10ms`.
+3. **Token Efficiency**: Instead of dumping thousands of raw lines or dozens of files, Lynx provides the minimal, precise coordinates (symbol ranges, file coordinates) needed.
+4. **Deterministic Base**: Bypasses ranking completely for exact symbol lookups (`O(1)` complexity) to guarantee repeatability.
+
+---
 
 ## Installation
 
-Install the CLI from crates.io:
+Install the CLI directly from crates.io:
 
 ```bash
 cargo install pizen-lynx
 ```
 
-The binary name is **`lx`**.
+The CLI installs under the binary name **`lx`**.
 
-## Usage
+---
 
-Index a repository:
+## CLI Usage
 
+Configure storage paths globally using the `-s` or `--storage-path` flag (defaults to `.lynx` in the current project root).
+
+### 1. Indexing a Repository
+Generate the semantic and symbol index for the repository:
 ```bash
 lx index /path/to/repo
 ```
-
-Search the index:
-
+*Note: Test, mock, and generated files are skipped by default. To include them, pass the `--include-tests` flag:*
 ```bash
-lx search "authentication flow"
+lx index /path/to/repo --include-tests
 ```
 
-Resolve a symbol:
+### 2. Conceptual Search
+Search your indexed codebase using lexical and semantic hybrid querying:
+```bash
+lx search "jwt validation token"
+```
+*Include test and generated code in search results:*
+```bash
+lx search "jwt validation token" --include-tests
+```
 
+### 3. Symbol Resolution
+Resolve an exact symbol's coordinates bypassing rank-fusion:
 ```bash
 lx resolve Login
 ```
 
-Find related implementations:
-
+### 4. Code Proximity & Related Items
+Find related implementations and references close to a specific line:
 ```bash
 lx related internal/auth/service.go:42
 ```
 
-To change the storage location (default: `.lynx`):
+### 5. Control Flow Visualization (with Lea)
+Query a conceptual flow and visualize its downstream control path by triggering Lea automatically:
+```bash
+lx flow "user validation handler"
+```
 
+### 6. Storage Customization
+Change the default directory for index and caching files:
 ```bash
 lx --storage-path /tmp/lynx index .
 ```
 
-### Development
+---
 
+## MCP Server
+
+Lynx includes a built-in **Model Context Protocol (MCP)** server communicating over standard input/output (stdio). This allows LLMs and AI agents (like Claude Desktop) to discover files and symbols natively.
+
+### Running the Server
+You can launch the server directly from the CLI:
 ```bash
-cargo run -p pizen-lynx -- search "jwt validation"
+lx mcp
 ```
-
-## MCP Server (JSON Lines)
-
-Run:
-
+Or run the workspace binary directly:
 ```bash
 cargo run -p lynx-mcp -- .lynx
 ```
 
-Send JSON per line on stdin:
+### Supported MCP Tools
 
-```json
-{"method":"search","params":{"query":"jwt validation"}}
-```
+#### 1. `search`
+Hybrid natural-language and keyword search across chunks.
+- **Arguments**: `query` (string)
+- **JSON-RPC payload**:
+  ```json
+  {"jsonrpc":"2.0", "id": 1, "method": "search", "params": {"query": "authentication flow"}}
+  ```
 
-```json
-{"method":"resolve_symbol","params":{"name":"Login"}}
-```
+#### 2. `resolve_symbol`
+Instant coordinate resolution for an exact symbol name.
+- **Arguments**: `name` (string)
+- **JSON-RPC payload**:
+  ```json
+  {"jsonrpc":"2.0", "id": 2, "method": "resolve_symbol", "params": {"name": "Login"}}
+  ```
 
-```json
-{"method":"find_related","params":{"file":"internal/auth/service.go","line":42}}
-```
+#### 3. `find_related`
+Retrieves implementation chunks matching or close to a coordinate.
+- **Arguments**: `file` (string), `line` (number)
+- **JSON-RPC payload**:
+  ```json
+  {"jsonrpc":"2.0", "id": 3, "method": "find_related", "params": {"file": "internal/auth/service.go", "line": 42}}
+  ```
+
+---
 
 ## Repository Layout
 
 ```
 crates/
-  lynx-cli/       # CLI tool (crate: pizen-lynx)
-  lynx-core/      # Retrieval pipeline + ranking
-  lynx-embed/     # Embeddings (FastEmbed)
-  lynx-mcp/       # MCP server
-  lynx-parser/    # Tree-sitter symbol extraction
-  lynx-protocol/  # Shared structs
-  lynx-storage/   # Tantivy index + embedding cache
+  lynx-cli/       # CLI tool and subcommand handler (crate: pizen-lynx)
+  lynx-common/    # Shared utilities and core workspace structures (crate: pizen-lynx-common)
+  lynx-core/      # RRF pipeline, classification, indexing, and ranking (crate: pizen-lynx-core)
+  lynx-embed/     # Embedding abstraction and local FastEmbed provider (crate: pizen-lynx-embed)
+  lynx-mcp/       # Standalone MCP server over stdio (crate: pizen-lynx-mcp)
+  lynx-parser/    # Syntax parsing and Tree-sitter symbol extraction (crate: pizen-lynx-parser)
+  lynx-protocol/  # Shared serializable serialization protocols (crate: pizen-lynx-protocol)
+  lynx-storage/   # Tantivy lexical indexing & embedding persistence (crate: pizen-lynx-storage)
 ```
 
-## Project Principles
-
-- Lynx focuses strictly on discovery; reasoning and impact analysis are delegated to Lea.
-- Results prioritize **symbol IDs** over raw snippets whenever possible.
+---
 
 ## Contributing
 
-Issues and pull requests are welcome. Please run `make ci` before submitting.
+We welcome issues and pull requests! Ensure all formatters, lints, and tests pass successfully before submitting changes:
+
+```bash
+make ci
+```
+
+---
 
 ## License
 
 MIT
+
