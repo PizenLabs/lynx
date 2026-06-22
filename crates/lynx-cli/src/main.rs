@@ -348,7 +348,7 @@ async fn handle_mcp_request(
             json!({"jsonrpc": "2.0", "id": id, "result": {
                 "tools": [
                     {
-                        "name": "search",
+                        "name": "search_graph",
                         "description": "Search the codebase for relevant code",
                         "inputSchema": {
                             "type": "object",
@@ -384,7 +384,7 @@ async fn handle_mcp_request(
                 ]
             }})
         }
-        "search" => {
+        "search_graph" => {
             let query = request
                 .params
                 .as_ref()
