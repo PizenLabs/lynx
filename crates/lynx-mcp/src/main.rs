@@ -153,7 +153,7 @@ async fn handle_request(
             json!({"jsonrpc": "2.0", "id": id, "result": {
                 "tools": [
                     {
-                        "name": "search_graph",
+                        "name": "lynx_search_graph",
                         "description": "Search the codebase for relevant code",
                         "inputSchema": {
                             "type": "object",
@@ -164,7 +164,7 @@ async fn handle_request(
                         }
                     },
                     {
-                        "name": "resolve_symbol",
+                        "name": "lynx_resolve_symbol",
                         "description": "Resolve a symbol by name within the codebase",
                         "inputSchema": {
                             "type": "object",
@@ -175,7 +175,7 @@ async fn handle_request(
                         }
                     },
                     {
-                        "name": "find_related",
+                        "name": "lynx_find_related",
                         "description": "Find related implementations across the codebase",
                         "inputSchema": {
                             "type": "object",
@@ -189,7 +189,7 @@ async fn handle_request(
                 ]
             }})
         }
-        "search_graph" => {
+        "lynx_search_graph" => {
             let query = request
                 .params
                 .as_ref()
@@ -208,7 +208,7 @@ async fn handle_request(
                 }
             }
         }
-        "resolve_symbol" => {
+        "lynx_resolve_symbol" => {
             let name = request
                 .params
                 .as_ref()
@@ -227,7 +227,7 @@ async fn handle_request(
                 }
             }
         }
-        "find_related" => {
+        "lynx_find_related" => {
             let file_path = request
                 .params
                 .as_ref()
