@@ -146,7 +146,7 @@ async fn handle_request(
             }})
         }
         "notifications/initialized" => {
-            // no-op — already handled by the id check above, but keep for clarity
+            // no-op
             serde_json::Value::Null
         }
         "tools/list" => {
@@ -185,11 +185,45 @@ async fn handle_request(
                             },
                             "required": ["file", "line"]
                         }
+                    },
+                    {
+                        "name": "lynx_lynx_search_graph",
+                        "description": "Search the codebase [opencode double-prefix alias]",
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {
+                                "query": {"type": "string", "description": "Search query"}
+                            },
+                            "required": ["query"]
+                        }
+                    },
+                    {
+                        "name": "lynx_lynx_resolve_symbol",
+                        "description": "Resolve a symbol [opencode double-prefix alias]",
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {
+                                "name": {"type": "string", "description": "Symbol name"}
+                            },
+                            "required": ["name"]
+                        }
+                    },
+                    {
+                        "name": "lynx_lynx_find_related",
+                        "description": "Find related implementations [opencode double-prefix alias]",
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {
+                                "file": {"type": "string", "description": "File path"},
+                                "line": {"type": "number", "description": "Line number"}
+                            },
+                            "required": ["file", "line"]
+                        }
                     }
                 ]
             }})
         }
-        "lynx_search_graph" => {
+        "lynx_search_graph" | "lynx_lynx_search_graph" => {
             let query = request
                 .params
                 .as_ref()
@@ -208,7 +242,7 @@ async fn handle_request(
                 }
             }
         }
-        "lynx_resolve_symbol" => {
+        "lynx_resolve_symbol" | "lynx_lynx_resolve_symbol" => {
             let name = request
                 .params
                 .as_ref()
@@ -227,7 +261,7 @@ async fn handle_request(
                 }
             }
         }
-        "lynx_find_related" => {
+        "lynx_find_related" | "lynx_lynx_find_related" => {
             let file_path = request
                 .params
                 .as_ref()
