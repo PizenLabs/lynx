@@ -47,8 +47,7 @@ impl ContextCompiler {
         capability_level: CapabilityLevel,
         token_budget: usize,
     ) -> ContextPackage {
-        let envelope_tokens =
-            self.envelope_tokens(&target_query, &evidence, &structural_relations);
+        let envelope_tokens = self.envelope_tokens(&target_query, &evidence, &structural_relations);
         let snippet_token_budget = token_budget.saturating_sub(envelope_tokens);
         self.slice_to_budget(&mut evidence, snippet_token_budget);
 
@@ -87,8 +86,8 @@ impl ContextCompiler {
             budget = budget.saturating_sub(sliced_chars);
             item.code_snippet = sliced;
             item.range.end_byte = item.range.start_byte + item.code_snippet.len();
-            item.range.end_line = item.range.start_line
-                + item.code_snippet.bytes().filter(|b| *b == b'\n').count();
+            item.range.end_line =
+                item.range.start_line + item.code_snippet.bytes().filter(|b| *b == b'\n').count();
         }
     }
 
@@ -139,9 +138,7 @@ impl ContextCompiler {
     ) -> usize {
         let identity_tokens: usize = evidence
             .iter()
-            .map(|item| {
-                item.identity.fqdn.chars().count() / self.chars_per_token + 1
-            })
+            .map(|item| item.identity.fqdn.chars().count() / self.chars_per_token + 1)
             .sum();
         self.estimate_tokens(target_query) + identity_tokens + relations.len()
     }
@@ -154,7 +151,14 @@ mod tests {
     use std::path::PathBuf;
 
     fn identity(fqdn: &str) -> SymbolIdentity {
-        SymbolIdentity::new(Language::Rust, fqdn, SymbolKind::Function, PathBuf::from("a.rs"), "h").unwrap()
+        SymbolIdentity::new(
+            Language::Rust,
+            fqdn,
+            SymbolKind::Function,
+            PathBuf::from("a.rs"),
+            "h",
+        )
+        .unwrap()
     }
 
     fn evidence(fqdn: &str, snippet: &str) -> Evidence {

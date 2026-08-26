@@ -14,10 +14,7 @@ pub const RRF_K: f32 = 60.0;
 /// Each list maps a symbol hash to its rank (0 = best). A symbol present in
 /// both lists accumulates contributions from each, favouring items that rank
 /// well across channels.
-pub fn rrf_fuse(
-    lexical: &[(String, usize)],
-    semantic: &[(String, usize)],
-) -> Vec<(String, f32)> {
+pub fn rrf_fuse(lexical: &[(String, usize)], semantic: &[(String, usize)]) -> Vec<(String, f32)> {
     let mut scores: HashMap<String, f32> = HashMap::new();
     for (hash, rank) in lexical {
         *scores.entry(hash.clone()).or_insert(0.0) += 1.0 / (RRF_K + *rank as f32);
@@ -85,7 +82,11 @@ pub fn finalize_fused(mut evidence: Vec<Evidence>) -> Vec<Evidence> {
             item.score /= max;
         }
     }
-    evidence.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+    evidence.sort_by(|a, b| {
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     for item in evidence.iter_mut() {
         item.retrieval_mode = RetrievalMode::Hybrid;
     }

@@ -148,9 +148,7 @@ func Validate(u *User) bool { return u.Name() != "" }
         // The module pseudo-symbol leads every identity set.
         assert!(symbols.iter().any(|s| s.kind == SymbolKind::Module));
         // Validate calls Name, so a Calls edge connects their hashes.
-        assert!(relations
-            .iter()
-            .any(|r| r.kind == RelationKind::Calls));
+        assert!(relations.iter().any(|r| r.kind == RelationKind::Calls));
     }
 
     #[test]

@@ -115,7 +115,11 @@ fn trailing_identifier(text: &str) -> Option<String> {
         .take_while(|ch| ch.is_alphanumeric() || *ch == '_')
         .collect();
     let ident: String = reversed.chars().rev().collect();
-    if ident.is_empty() { None } else { Some(ident) }
+    if ident.is_empty() {
+        None
+    } else {
+        Some(ident)
+    }
 }
 
 /// Returns the lazily compiled query cached in `cell`.
@@ -208,7 +212,9 @@ fn push_raw(
     text: &[u8],
     container: Option<ContainerKey>,
 ) {
-    let Ok(slice) = node.utf8_text(text) else { return };
+    let Ok(slice) = node.utf8_text(text) else {
+        return;
+    };
     let index = raws.len();
     raws.push(RawSymbol {
         kind,
@@ -271,9 +277,15 @@ fn implements_edge(type_hash: &str, contract_hash: &str) -> Relation {
 
 fn sort_and_dedup(mut relations: Vec<Relation>) -> Vec<Relation> {
     relations.sort_by(|a, b| {
-        (kind_rank(a.kind), &a.source_id, &a.target_id).cmp(&(kind_rank(b.kind), &b.source_id, &b.target_id))
+        (kind_rank(a.kind), &a.source_id, &a.target_id).cmp(&(
+            kind_rank(b.kind),
+            &b.source_id,
+            &b.target_id,
+        ))
     });
-    relations.dedup_by(|a, b| a.kind == b.kind && a.source_id == b.source_id && a.target_id == b.target_id);
+    relations.dedup_by(|a, b| {
+        a.kind == b.kind && a.source_id == b.source_id && a.target_id == b.target_id
+    });
     relations
 }
 
@@ -420,7 +432,11 @@ fn rust_symbol_query() -> Result<&'static Query, ParseError> {
 
 fn rust_impl_query() -> Result<&'static Query, ParseError> {
     static CELL: OnceLock<Result<Query, String>> = OnceLock::new();
-    cached_query(&CELL, tree_sitter_rust::LANGUAGE.into(), RUST_IMPL_QUERY_SRC)
+    cached_query(
+        &CELL,
+        tree_sitter_rust::LANGUAGE.into(),
+        RUST_IMPL_QUERY_SRC,
+    )
 }
 
 fn rust_tree(source: &str) -> Result<Tree, ParseError> {
@@ -428,7 +444,9 @@ fn rust_tree(source: &str) -> Result<Tree, ParseError> {
     parser
         .set_language(&tree_sitter_rust::LANGUAGE.into())
         .map_err(|error| ParseError::Grammar(error.to_string()))?;
-    parser.parse(source, None).ok_or(ParseError::InvalidSource("Rust"))
+    parser
+        .parse(source, None)
+        .ok_or(ParseError::InvalidSource("Rust"))
 }
 
 /// Names the lexical container governing a Rust item's fqdn and ownership.
@@ -551,7 +569,15 @@ fn analyze_rust(tree: &Tree, source: &str, path: &Path) -> Result<RustAnalysis, 
                     Some(ContainerKey::Module),
                 ),
             };
-            push_raw(&mut raws, &mut container_requests, kind, fqdn, node, text, container);
+            push_raw(
+                &mut raws,
+                &mut container_requests,
+                kind,
+                fqdn,
+                node,
+                text,
+                container,
+            );
         } else if let Some(node) = capture_node(query, mat, "struct_node") {
             let Some(name) = capture_text(query, mat, "struct_name", text) else {
                 continue;
@@ -643,10 +669,18 @@ fn rust_implements(
         let Some(type_name) = rust_type_name(type_node, text) else {
             continue;
         };
-        let type_index = find_raw(&prefix, raws, &type_name, &[SymbolKind::Struct, SymbolKind::Enum]);
+        let type_index = find_raw(
+            &prefix,
+            raws,
+            &type_name,
+            &[SymbolKind::Struct, SymbolKind::Enum],
+        );
         let trait_index = find_raw(&prefix, raws, &trait_name, &[SymbolKind::Trait]);
         if let (Some(type_index), Some(trait_index)) = (type_index, trait_index) {
-            relations.push(implements_edge(&raws[type_index].hash, &raws[trait_index].hash));
+            relations.push(implements_edge(
+                &raws[type_index].hash,
+                &raws[trait_index].hash,
+            ));
         }
     }
     Ok(sort_and_dedup(relations))
@@ -679,7 +713,12 @@ impl LanguageAdapter for RustAdapter {
     ) -> Result<Vec<SymbolIdentity>, ParseError> {
         let tree = rust_tree(source)?;
         let analysis = analyze_rust(&tree, source, file_path)?;
-        Ok(symbol_identities(Language::Rust, file_path, source, &analysis.raws))
+        Ok(symbol_identities(
+            Language::Rust,
+            file_path,
+            source,
+            &analysis.raws,
+        ))
     }
 
     fn extract_relations(
@@ -731,7 +770,9 @@ fn go_tree(source: &str) -> Result<Tree, ParseError> {
     parser
         .set_language(&tree_sitter_go::LANGUAGE.into())
         .map_err(|error| ParseError::Grammar(error.to_string()))?;
-    parser.parse(source, None).ok_or(ParseError::InvalidSource("Go"))
+    parser
+        .parse(source, None)
+        .ok_or(ParseError::InvalidSource("Go"))
 }
 
 fn go_package_name(root: Node, text: &[u8]) -> String {
@@ -889,11 +930,18 @@ fn go_implements(analysis: &GoAnalysis, raws: &[RawSymbol]) -> Vec<Relation> {
             if receiver == interface_name || !required.iter().all(|m| provided.contains(m)) {
                 continue;
             }
-            let type_index =
-                find_raw(prefix, raws, receiver, &[SymbolKind::Struct, SymbolKind::Interface]);
+            let type_index = find_raw(
+                prefix,
+                raws,
+                receiver,
+                &[SymbolKind::Struct, SymbolKind::Interface],
+            );
             let contract_index = find_raw(prefix, raws, interface_name, &[SymbolKind::Interface]);
             if let (Some(type_index), Some(contract_index)) = (type_index, contract_index) {
-                relations.push(implements_edge(&raws[type_index].hash, &raws[contract_index].hash));
+                relations.push(implements_edge(
+                    &raws[type_index].hash,
+                    &raws[contract_index].hash,
+                ));
             }
         }
     }
@@ -926,7 +974,12 @@ impl LanguageAdapter for GoAdapter {
     ) -> Result<Vec<SymbolIdentity>, ParseError> {
         let tree = go_tree(source)?;
         let analysis = analyze_go(&tree, source, file_path)?;
-        Ok(symbol_identities(Language::Go, file_path, source, &analysis.raws))
+        Ok(symbol_identities(
+            Language::Go,
+            file_path,
+            source,
+            &analysis.raws,
+        ))
     }
 
     fn extract_relations(
@@ -1030,7 +1083,9 @@ fn ts_family_tree(family: TsFamily, source: &str) -> Result<Tree, ParseError> {
     parser
         .set_language(&grammar)
         .map_err(|error| ParseError::Grammar(error.to_string()))?;
-    parser.parse(source, None).ok_or(ParseError::InvalidSource(label))
+    parser
+        .parse(source, None)
+        .ok_or(ParseError::InvalidSource(label))
 }
 
 /// Names the lexical container governing a TS/JS member's fqdn and ownership.
@@ -1105,7 +1160,15 @@ fn analyze_ts_family(
                     Some(ContainerKey::Module),
                 ),
             };
-            push_raw(&mut raws, &mut container_requests, kind, fqdn, node, text, container);
+            push_raw(
+                &mut raws,
+                &mut container_requests,
+                kind,
+                fqdn,
+                node,
+                text,
+                container,
+            );
         } else if let Some(node) = capture_node(query, mat, "class_node") {
             let Some(name) = capture_text(query, mat, "class_name", text) else {
                 continue;
@@ -1154,7 +1217,15 @@ fn analyze_ts_family(
                     }),
                 ),
             };
-            push_raw(&mut raws, &mut container_requests, kind, fqdn, node, text, container);
+            push_raw(
+                &mut raws,
+                &mut container_requests,
+                kind,
+                fqdn,
+                node,
+                text,
+                container,
+            );
         }
     }
 
@@ -1191,7 +1262,10 @@ fn ts_implements(
         let class_index = find_raw(&prefix, raws, class_name, &[SymbolKind::Class]);
         let interface_index = find_raw(&prefix, raws, interface_name, &[SymbolKind::Interface]);
         if let (Some(class_index), Some(interface_index)) = (class_index, interface_index) {
-            relations.push(implements_edge(&raws[class_index].hash, &raws[interface_index].hash));
+            relations.push(implements_edge(
+                &raws[class_index].hash,
+                &raws[interface_index].hash,
+            ));
         }
     }
     Ok(sort_and_dedup(relations))
@@ -1222,7 +1296,12 @@ impl LanguageAdapter for TypeScriptAdapter {
     ) -> Result<Vec<SymbolIdentity>, ParseError> {
         let tree = ts_family_tree(TsFamily::TypeScript, source)?;
         let analysis = analyze_ts_family(TsFamily::TypeScript, &tree, source, file_path)?;
-        Ok(symbol_identities(Language::TypeScript, file_path, source, &analysis.raws))
+        Ok(symbol_identities(
+            Language::TypeScript,
+            file_path,
+            source,
+            &analysis.raws,
+        ))
     }
 
     fn extract_relations(
@@ -1280,7 +1359,12 @@ impl LanguageAdapter for JavaScriptAdapter {
     ) -> Result<Vec<SymbolIdentity>, ParseError> {
         let tree = ts_family_tree(TsFamily::JavaScript, source)?;
         let analysis = analyze_ts_family(TsFamily::JavaScript, &tree, source, file_path)?;
-        Ok(symbol_identities(Language::JavaScript, file_path, source, &analysis.raws))
+        Ok(symbol_identities(
+            Language::JavaScript,
+            file_path,
+            source,
+            &analysis.raws,
+        ))
     }
 
     fn extract_relations(
@@ -1321,7 +1405,11 @@ const PY_SYMBOL_QUERY_SRC: &str = r#"
 
 fn py_symbol_query() -> Result<&'static Query, ParseError> {
     static CELL: OnceLock<Result<Query, String>> = OnceLock::new();
-    cached_query(&CELL, tree_sitter_python::LANGUAGE.into(), PY_SYMBOL_QUERY_SRC)
+    cached_query(
+        &CELL,
+        tree_sitter_python::LANGUAGE.into(),
+        PY_SYMBOL_QUERY_SRC,
+    )
 }
 
 fn py_tree(source: &str) -> Result<Tree, ParseError> {
@@ -1329,7 +1417,9 @@ fn py_tree(source: &str) -> Result<Tree, ParseError> {
     parser
         .set_language(&tree_sitter_python::LANGUAGE.into())
         .map_err(|error| ParseError::Grammar(error.to_string()))?;
-    parser.parse(source, None).ok_or(ParseError::InvalidSource("Python"))
+    parser
+        .parse(source, None)
+        .ok_or(ParseError::InvalidSource("Python"))
 }
 
 /// Names the lexical container governing a Python def/class's fqdn.
@@ -1404,7 +1494,15 @@ fn analyze_py(tree: &Tree, source: &str, path: &Path) -> Result<PyAnalysis, Pars
                     Some(ContainerKey::Module),
                 ),
             };
-            push_raw(&mut raws, &mut container_requests, kind, fqdn, node, text, container);
+            push_raw(
+                &mut raws,
+                &mut container_requests,
+                kind,
+                fqdn,
+                node,
+                text,
+                container,
+            );
         } else if let Some(node) = capture_node(query, mat, "class_node") {
             let Some(name) = capture_text(query, mat, "class_name", text) else {
                 continue;
@@ -1416,10 +1514,9 @@ fn analyze_py(tree: &Tree, source: &str, path: &Path) -> Result<PyAnalysis, Pars
                     // through the same Type key.
                     Some(ContainerKey::Type(chain)),
                 ),
-                PyContainer::NestedFunction | PyContainer::None => (
-                    format!("{prefix}::{name}"),
-                    Some(ContainerKey::Module),
-                ),
+                PyContainer::NestedFunction | PyContainer::None => {
+                    (format!("{prefix}::{name}"), Some(ContainerKey::Module))
+                }
             };
             push_raw(
                 &mut raws,
@@ -1469,7 +1566,12 @@ impl LanguageAdapter for PythonAdapter {
     ) -> Result<Vec<SymbolIdentity>, ParseError> {
         let tree = py_tree(source)?;
         let analysis = analyze_py(&tree, source, file_path)?;
-        Ok(symbol_identities(Language::Python, file_path, source, &analysis.raws))
+        Ok(symbol_identities(
+            Language::Python,
+            file_path,
+            source,
+            &analysis.raws,
+        ))
     }
 
     fn extract_relations(
@@ -1549,7 +1651,11 @@ fn atx_slug(line: &str) -> Option<String> {
     while slug.ends_with('-') {
         slug.pop();
     }
-    if slug.is_empty() { None } else { Some(slug) }
+    if slug.is_empty() {
+        None
+    } else {
+        Some(slug)
+    }
 }
 
 /// Grammar-less adapter handling Markdown sections plus YAML, JSON, TOML, and

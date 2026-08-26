@@ -4,7 +4,9 @@
 use std::path::Path;
 use std::sync::Mutex;
 
-use lynx_protocol::{Language, Relation, RelationKind, Snapshot, SourceRange, SymbolIdentity, SymbolKind};
+use lynx_protocol::{
+    Language, Relation, RelationKind, Snapshot, SourceRange, SymbolIdentity, SymbolKind,
+};
 use rusqlite::{params, Connection};
 
 use crate::error::StorageError;
@@ -163,10 +165,7 @@ impl GraphStore {
              WHERE (source_id = ?1 OR target_id = ?1) AND (?2 IS NULL OR kind = ?2)
              ORDER BY source_id, target_id",
         )?;
-        let mut rows = statement.query(params![
-            symbol_hash,
-            kind.map(encode_relation_kind),
-        ])?;
+        let mut rows = statement.query(params![symbol_hash, kind.map(encode_relation_kind),])?;
         let mut relations = Vec::new();
         while let Some(row) = rows.next()? {
             relations.push(Relation {
@@ -253,7 +252,6 @@ fn init_tables(conn: &Connection) -> Result<(), StorageError> {
     )?;
     Ok(())
 }
-
 
 // Column encodings mirror the protocol enums' serde wire form verbatim
 // ("Method", "Go", "Calls"); decoding rejects anything else.
@@ -378,7 +376,9 @@ mod tests {
         store.save_snapshot(&snapshot("snap1")).unwrap();
 
         let (id, range) = identity("crate::greet", SymbolKind::Function);
-        store.insert_symbols(&[(id.clone(), range)], "snap1").unwrap();
+        store
+            .insert_symbols(&[(id.clone(), range)], "snap1")
+            .unwrap();
 
         let loaded = store.get_symbol_by_hash("crate::greet").unwrap().unwrap();
         assert_eq!(loaded, id);
@@ -393,10 +393,16 @@ mod tests {
         let (caller, _) = identity("crate::caller", SymbolKind::Function);
         let (callee, _) = identity("crate::callee", SymbolKind::Function);
         store
-            .insert_symbols(&[(caller.clone(), SourceRange::new(1, 1, 0, 10).unwrap())], "snap1")
+            .insert_symbols(
+                &[(caller.clone(), SourceRange::new(1, 1, 0, 10).unwrap())],
+                "snap1",
+            )
             .unwrap();
         store
-            .insert_symbols(&[(callee.clone(), SourceRange::new(2, 2, 0, 10).unwrap())], "snap1")
+            .insert_symbols(
+                &[(callee.clone(), SourceRange::new(2, 2, 0, 10).unwrap())],
+                "snap1",
+            )
             .unwrap();
 
         let relation = Relation {

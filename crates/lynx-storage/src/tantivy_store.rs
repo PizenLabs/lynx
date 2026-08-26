@@ -4,7 +4,7 @@ use std::path::Path;
 
 use tantivy::collector::TopDocs;
 use tantivy::query::QueryParser;
-use tantivy::schema::{Field, Schema, STRING, STORED, TantivyDocument, TEXT, Value};
+use tantivy::schema::{Field, Schema, TantivyDocument, Value, STORED, STRING, TEXT};
 use tantivy::{doc, Index, IndexWriter};
 
 use crate::error::StorageError;
@@ -85,7 +85,11 @@ impl TantivyStore {
 
     /// Full-text search over snippet content, language, and file path;
     /// returns at most `limit` hits ordered by descending relevance.
-    pub fn search_snippets(&self, query: &str, limit: usize) -> Result<Vec<LexicalHit>, StorageError> {
+    pub fn search_snippets(
+        &self,
+        query: &str,
+        limit: usize,
+    ) -> Result<Vec<LexicalHit>, StorageError> {
         let parser = QueryParser::for_index(
             &self.index,
             vec![self.code_snippet, self.language, self.file_path],
@@ -150,7 +154,9 @@ mod tests {
     fn no_match_returns_empty() {
         let dir = tempfile::tempdir().unwrap();
         let store = TantivyStore::open(dir.path()).unwrap();
-        store.add_documents(&[doc("h1", "fn build_client() {}")]).unwrap();
+        store
+            .add_documents(&[doc("h1", "fn build_client() {}")])
+            .unwrap();
         let hits = store.search_snippets("totally_unrelated", 10).unwrap();
         assert!(hits.is_empty());
     }
