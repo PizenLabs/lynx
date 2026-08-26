@@ -9,7 +9,7 @@ homepage.workspace = true
 description = "Source code parser for Lynx."
 
 [dependencies]
-anyhow = "1.0.102"
+thiserror = "2.0.18"
 blake3 = "1.8.5"
 
 tree-sitter = "0.26.9"
