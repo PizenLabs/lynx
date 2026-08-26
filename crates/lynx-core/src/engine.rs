@@ -16,16 +16,21 @@ use walkdir::WalkDir;
 
 use crate::compiler::ContextCompiler;
 use crate::error::CoreError;
-use crate::retrieval::{
-    apply_definition_boost, cosine_similarity, finalize_fused, rrf_fuse,
-};
+use crate::retrieval::{apply_definition_boost, cosine_similarity, finalize_fused, rrf_fuse};
 
 /// Maximum number of source lines captured as a per-symbol snippet.
 const MAX_SNIPPET_LINES: usize = 25;
 
 /// Files and directories always excluded from indexing.
 const EXCLUDED_SEGMENTS: &[&str] = &[
-    ".git", "node_modules", "vendor", "target", "build", "dist",
+    ".git",
+    ".lynx",
+    ".fastembed_cache",
+    "node_modules",
+    "vendor",
+    "target",
+    "build",
+    "dist",
 ];
 
 /// A symbol retained in memory so the engine can reconstruct [`Evidence`]
@@ -114,7 +119,11 @@ impl Engine {
     /// Pipeline per file: git provenance -> [`Parser::parse`] ->
     /// [`DualStorage::insert_symbols`] & [`DualStorage::insert_relations`] ->
     /// Tantivy indexing + vector embedding.
-    pub fn index_repository(&self, repo_path: &Path, include_tests: bool) -> Result<IndexStatus, CoreError> {
+    pub fn index_repository(
+        &self,
+        repo_path: &Path,
+        include_tests: bool,
+    ) -> Result<IndexStatus, CoreError> {
         let snapshot = resolve_snapshot(repo_path)?;
         self.dual.graph().save_snapshot(&snapshot)?;
 
@@ -137,11 +146,10 @@ impl Engine {
                 Ok(source) => source,
                 Err(_) => continue, // binary or unreadable
             };
-            let (parsed_symbols, parsed_relations) =
-                match self.parser.parse(relative, &source) {
-                    Ok(pair) => pair,
-                    Err(_) => continue, // unparseable file
-                };
+            let (parsed_symbols, parsed_relations) = match self.parser.parse(relative, &source) {
+                Ok(pair) => pair,
+                Err(_) => continue, // unparseable file
+            };
             file_count += 1;
             if capability_rank(adapter_capability(relative)) > capability_rank(max_capability) {
                 max_capability = adapter_capability(relative);
@@ -161,8 +169,12 @@ impl Engine {
                 .iter()
                 .map(|(identity, range, _)| (identity.clone(), range.clone()))
                 .collect();
-            self.dual.graph().insert_symbols(&entries, &snapshot.content_hash)?;
-            self.dual.graph().insert_relations(&parsed_relations, &snapshot.content_hash)?;
+            self.dual
+                .graph()
+                .insert_symbols(&entries, &snapshot.content_hash)?;
+            self.dual
+                .graph()
+                .insert_relations(&parsed_relations, &snapshot.content_hash)?;
 
             // Index snippets into Tantivy.
             let docs: Vec<lynx_storage::LexicalDoc> = file_identities
@@ -180,9 +192,7 @@ impl Engine {
             let texts: Vec<&str> = file_identities.iter().map(|(_, _, s)| s.as_str()).collect();
             let vectors = self.provider.embed_batch(&texts)?;
 
-            for ((identity, range, snippet), vector) in
-                file_identities.into_iter().zip(vectors)
-            {
+            for ((identity, range, snippet), vector) in file_identities.into_iter().zip(vectors) {
                 embeddings.insert(identity.content_hash.clone(), vector);
                 symbols.insert(
                     identity.content_hash.clone(),
@@ -265,17 +275,25 @@ impl Engine {
         let mut evidence: Vec<Evidence> = fused
             .into_iter()
             .filter_map(|(hash, score)| {
-                symbols.get(&hash).map(|stored| {
-                    stored.to_evidence(&snapshot, score, mode)
-                })
+                symbols
+                    .get(&hash)
+                    .map(|stored| stored.to_evidence(&snapshot, score, mode))
             })
             .collect();
         if evidence.is_empty() {
             // Fall back to the single best channel when one was empty.
-            let list = if lexical.is_empty() { &semantic } else { &lexical };
+            let list = if lexical.is_empty() {
+                &semantic
+            } else {
+                &lexical
+            };
             evidence = list
                 .iter()
-                .filter_map(|(hash, _)| symbols.get(hash).map(|stored| stored.to_evidence(&snapshot, 0.0, mode)))
+                .filter_map(|(hash, _)| {
+                    symbols
+                        .get(hash)
+                        .map(|stored| stored.to_evidence(&snapshot, 0.0, mode))
+                })
                 .collect();
         }
         apply_definition_boost(&mut evidence);
@@ -295,9 +313,9 @@ impl Engine {
         let direct = symbols
             .values()
             .find(|stored| stored.identity.fqdn == needle);
-        let by_name = symbols.values().find(|stored| {
-            trailing_segment(&stored.identity.fqdn) == needle
-        });
+        let by_name = symbols
+            .values()
+            .find(|stored| trailing_segment(&stored.identity.fqdn) == needle);
         Ok(direct
             .or(by_name)
             .map(|stored| stored.to_evidence(&snapshot, 1.0, RetrievalMode::Structural)))
@@ -325,7 +343,11 @@ impl Engine {
                 }));
             }
         };
-        Ok(Some(stored.to_evidence(&snapshot, 1.0, RetrievalMode::Structural)))
+        Ok(Some(stored.to_evidence(
+            &snapshot,
+            1.0,
+            RetrievalMode::Structural,
+        )))
     }
 
     /// `relations`: structural graph query incident to `symbol_hash`.
@@ -339,11 +361,7 @@ impl Engine {
 
     /// `trace`: breadth-first traversal of the relation graph from
     /// `symbol_hash` up to `depth`, returning all discovered edges (deduped).
-    pub fn trace(
-        &self,
-        symbol_hash: &str,
-        depth: usize,
-    ) -> Result<Vec<Relation>, CoreError> {
+    pub fn trace(&self, symbol_hash: &str, depth: usize) -> Result<Vec<Relation>, CoreError> {
         let mut visited: HashSet<String> = HashSet::new();
         let mut edges: Vec<Relation> = Vec::new();
         let mut queue: VecDeque<(String, usize)> = VecDeque::new();
@@ -367,7 +385,11 @@ impl Engine {
             }
         }
         edges.sort_by(|a, b| {
-            (a.kind as u8, &a.source_id, &a.target_id).cmp(&(b.kind as u8, &b.source_id, &b.target_id))
+            (a.kind as u8, &a.source_id, &a.target_id).cmp(&(
+                b.kind as u8,
+                &b.source_id,
+                &b.target_id,
+            ))
         });
         edges.dedup_by(|a, b| {
             a.kind == b.kind && a.source_id == b.source_id && a.target_id == b.target_id
@@ -383,36 +405,44 @@ impl Engine {
             return Err(CoreError::NotIndexed);
         }
         let snapshot = self.snapshot.lock().unwrap().clone();
-        let target = embeddings
-            .get(symbol_hash)
-            .ok_or(CoreError::NotIndexed)?;
+        let target = embeddings.get(symbol_hash).ok_or(CoreError::NotIndexed)?;
         let mut scored: Vec<(String, f32)> = embeddings
             .iter()
             .filter(|(hash, _)| hash.as_str() != symbol_hash)
-            .filter_map(|(hash, vec)| {
-                cosine_similarity(target, vec).map(|sim| (hash.clone(), sim))
-            })
+            .filter_map(|(hash, vec)| cosine_similarity(target, vec).map(|sim| (hash.clone(), sim)))
             .collect();
         scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
         Ok(scored
             .into_iter()
             .take(limit)
             .filter_map(|(hash, score)| {
-                symbols.get(&hash).map(|stored| stored.to_evidence(&snapshot, score, RetrievalMode::Semantic))
+                symbols
+                    .get(&hash)
+                    .map(|stored| stored.to_evidence(&snapshot, score, RetrievalMode::Semantic))
             })
             .collect())
     }
 
     /// `context`: runs `search` plus `relations` and compiles a
     /// [`lynx_protocol::ContextPackage`] bounded to `token_budget` tokens.
-    pub fn context(&self, query: &str, token_budget: usize) -> Result<lynx_protocol::ContextPackage, CoreError> {
+    pub fn context(
+        &self,
+        query: &str,
+        token_budget: usize,
+    ) -> Result<lynx_protocol::ContextPackage, CoreError> {
         let search = self.search(query, RetrievalMode::Hybrid, 16)?;
         let mut relations: Vec<Relation> = Vec::new();
         let mut seen: HashSet<String> = HashSet::new();
         for evidence in &search {
-            let incident = self.dual.graph().get_relations(&evidence.identity.content_hash, None)?;
+            let incident = self
+                .dual
+                .graph()
+                .get_relations(&evidence.identity.content_hash, None)?;
             for relation in incident {
-                let key = format!("{}|{}|{}", relation.source_id, relation.target_id, relation.kind as u8);
+                let key = format!(
+                    "{}|{}|{}",
+                    relation.source_id, relation.target_id, relation.kind as u8
+                );
                 if seen.insert(key) {
                     relations.push(relation);
                 }
@@ -466,7 +496,12 @@ fn tree_hash(repo_path: &Path) -> String {
         .into_iter()
         .filter_map(Result::ok)
         .filter(|entry| entry.file_type().is_file())
-        .filter(|entry| !should_skip(entry.path().strip_prefix(repo_path).unwrap_or(entry.path()), false))
+        .filter(|entry| {
+            !should_skip(
+                entry.path().strip_prefix(repo_path).unwrap_or(entry.path()),
+                false,
+            )
+        })
         .map(|entry| entry.into_path())
         .collect();
     paths.sort();
@@ -494,7 +529,11 @@ fn should_skip(relative: &Path, include_tests: bool) -> bool {
         return false;
     }
     text.split('/').any(|part| {
-        part == "test" || part == "tests" || part == "mock" || part == "mocks" || part == "generated"
+        part == "test"
+            || part == "tests"
+            || part == "mock"
+            || part == "mocks"
+            || part == "generated"
     })
 }
 
@@ -529,11 +568,7 @@ fn adapter_capability(path: &Path) -> CapabilityLevel {
 ///
 /// Module pseudo-symbols capture the whole file; named symbols capture a
 /// line-boundary window anchored at the first occurrence of their name.
-fn symbol_range(
-    source: &str,
-    identity: &SymbolIdentity,
-    is_module: bool,
-) -> (SourceRange, String) {
+fn symbol_range(source: &str, identity: &SymbolIdentity, is_module: bool) -> (SourceRange, String) {
     if is_module {
         let lines = source.lines().count().max(1);
         let len = source.len();
@@ -699,7 +734,10 @@ mod tests {
         let status = engine.index_status();
         assert!(status.symbol_count > 0);
         assert_eq!(status.file_count, 1);
-        assert!(capability_rank(status.capability_level) >= capability_rank(CapabilityLevel::L3Structural));
+        assert!(
+            capability_rank(status.capability_level)
+                >= capability_rank(CapabilityLevel::L3Structural)
+        );
 
         let resolved = engine.resolve("auth::Validate").unwrap().unwrap();
         assert_eq!(resolved.identity.fqdn, "auth::Validate");
@@ -743,7 +781,9 @@ mod tests {
     #[test]
     fn search_returns_ranked_evidence() {
         let (_ws, _storage, engine) = indexed_engine();
-        let results = engine.search("Validate", RetrievalMode::Hybrid, 10).unwrap();
+        let results = engine
+            .search("Validate", RetrievalMode::Hybrid, 10)
+            .unwrap();
         assert!(!results.is_empty());
         assert!(results[0].score >= results.last().map(|l| l.score).unwrap_or(0.0));
     }
