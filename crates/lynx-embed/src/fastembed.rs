@@ -1,5 +1,6 @@
 //! FastEmbed-backed [`crate::VectorProvider`] implementation.
 
+use std::path::PathBuf;
 use std::sync::Mutex;
 
 use fastembed::{EmbeddingModel, InitOptionsWithLength, TextEmbedding};
@@ -29,8 +30,25 @@ impl FastEmbedProvider {
     pub fn with_model(model_name: EmbeddingModel) -> Result<Self, EmbedError> {
         let mut options = InitOptionsWithLength::new(model_name);
         options = options.with_show_download_progress(true);
-        let model = TextEmbedding::try_new(options)
-            .map_err(|error| EmbedError::Init(error.to_string()))?;
+        let model =
+            TextEmbedding::try_new(options).map_err(|error| EmbedError::Init(error.to_string()))?;
+        Ok(Self {
+            model: Mutex::new(model),
+        })
+    }
+
+    /// Builds the `bge-small-en-v1.5` provider with model weights cached
+    /// under `cache_dir`.
+    ///
+    /// The fastembed default writes `.fastembed_cache` into the current
+    /// directory; transports pin an explicit location so indexing a
+    /// workspace never deposits model artifacts (including zero-byte lock
+    /// files) into it.
+    pub fn with_cache_dir(cache_dir: PathBuf) -> Result<Self, EmbedError> {
+        let mut options = InitOptionsWithLength::new(EmbeddingModel::BGESmallENV15);
+        options = options.with_cache_dir(cache_dir);
+        let model =
+            TextEmbedding::try_new(options).map_err(|error| EmbedError::Init(error.to_string()))?;
         Ok(Self {
             model: Mutex::new(model),
         })
