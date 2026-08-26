@@ -2146,8 +2146,9 @@ dependencies = [
 name = "pizen-lynx-protocol"
 version = "0.1.4"
 dependencies = [
- "blake3",
  "serde",
+ "serde_json",
+ "thiserror",
 ]
 
 [[package]]
