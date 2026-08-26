@@ -6,11 +6,8 @@ license.workspace = true
 repository.workspace = true
 homepage.workspace = true
 
-description = "Embedding support for Lynx."
+description = "Pure vector embedding provider for Lynx, backed by FastEmbed."
 
 [dependencies]
-anyhow = "1.0.102"
-async-trait = "0.1.89"
 fastembed = "5.15.0"
-
-lynx-protocol.workspace = true
+thiserror = "2.0.18"
