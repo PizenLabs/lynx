@@ -1,463 +1,248 @@
-use anyhow::Result;
+//! `lx`: command-line transport over the Lynx core primitives.
+//!
+//! Retrieval subcommands open an ephemeral session (fresh substrate
+//! indexed once from the resolved workspace) and print protocol results;
+//! `lx index` builds the persistent `.lynx` directory; `lx mcp` launches
+//! the stdio MCP server from [`lynx_mcp`].
+
+use std::collections::BTreeMap;
+use std::path::PathBuf;
+
+use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand};
-use lynx_core::Lynx;
-use serde::Deserialize;
-use serde_json::json;
-use std::future;
-use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
-use tokio::io::{self, AsyncBufReadExt, AsyncWriteExt, BufReader};
+use lynx_core::Engine;
+
+use lynx_mcp::{workspace_root, ServerConfig};
+use lynx_protocol::{CapabilityLevel, Evidence, RetrievalMode};
 
 #[derive(Parser)]
-#[command(name = "lx")]
-#[command(about = "Lynx: Discovery Engine for AI-Native Software Engineering", long_about = None)]
+#[command(
+    name = "lx",
+    about = "Lynx: Discovery Engine for AI-Native Software Engineering",
+    version
+)]
 struct Cli {
-    #[arg(short, long, default_value = ".lynx")]
-    storage_path: PathBuf,
-
     #[command(subcommand)]
     command: Commands,
 }
 
-// Add version subcommand
-
 #[derive(Subcommand)]
 enum Commands {
-    /// Show version information
-    /// Index a repository
+    /// Index a repository into ./.lynx (persistent artifact)
     Index {
+        /// Repository root to index (default: current directory)
         #[arg(default_value = ".")]
         path: PathBuf,
-        /// Include test, mock, generated files in indexing
-        #[arg(long, action = clap::ArgAction::SetTrue, default_value_t = false)]
+        /// Include test, mock, and generated files
+        #[arg(long)]
         include_tests: bool,
+        /// Rebuild, replacing an existing .lynx
+        #[arg(long)]
+        force: bool,
     },
-    /// Search the index
+    /// Hybrid search; prints ranked Evidence lines
     Search {
         query: String,
-        /// Include test, mock, generated files in search results
-        #[arg(long, action = clap::ArgAction::SetTrue, default_value_t = false)]
-        include_tests: bool,
+        /// Maximum number of results
+        #[arg(short, long, default_value_t = 10)]
+        limit: usize,
+        /// Retrieval channel
+        #[arg(short, long, default_value = "hybrid")]
+        mode: String,
     },
-    /// Resolve a symbol by name
+    /// Print exact SymbolIdentity coordinates for a symbol
     Resolve { name: String },
-    /// Find related implementations
-    Related { location: String },
-    /// Discover and visualize control flow using Lea
-    Flow { query: String },
-    /// Start MCP (Model Context Protocol) server over stdio
-    Mcp,
-    /// Show version information
-    Version,
-    #[command(hide = true)]
-    Init {
-        #[arg(default_value = ".")]
-        path: PathBuf,
+    /// Print the structural relation graph incident to a symbol
+    Relations { symbol: String },
+    /// Print a compiled ContextPackage as JSON
+    Context {
+        query: String,
+        /// Token ceiling for the compiled package
+        #[arg(long, default_value_t = 2048)]
+        token_budget: usize,
+    },
+    /// Launch the stdio MCP server
+    Mcp {
+        /// Include test, mock, and generated files in the index
+        #[arg(long)]
+        include_tests: bool,
     },
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
-    tracing_subscriber::fmt::init();
-
-    let cli = Cli::parse();
-    let mut lynx = Lynx::new(&cli.storage_path).await?;
-
-    match cli.command {
+fn main() -> Result<()> {
+    match Cli::parse().command {
         Commands::Index {
             path,
             include_tests,
-        } => {
-            println!("Indexing repository at {:?}", path);
-            lynx.set_include_tests(include_tests);
-            lynx.index_repository(&path).await?;
-            println!("Indexing complete.");
-        }
-        Commands::Search {
+            force,
+        } => index(&path, include_tests, force),
+        Commands::Search { query, limit, mode } => search(&query, limit, &mode),
+        Commands::Resolve { name } => resolve(&name),
+        Commands::Relations { symbol } => relations(&symbol),
+        Commands::Context {
             query,
+            token_budget,
+        } => context(&query, token_budget),
+        Commands::Mcp { include_tests } => lynx_mcp::run(ServerConfig {
+            workspace_root: workspace_root()?,
             include_tests,
-        } => {
-            lynx.set_include_tests(include_tests);
-            let results = lynx.search(&query).await?;
-            if results.is_empty() {
-                println!("No results found.");
-            } else {
-                for result in results {
-                    println!("{}", format_discovery(&result));
-                }
-            }
-        }
-        Commands::Resolve { name } => {
-            let results = lynx.resolve_symbol(&name).await?;
-            if results.is_empty() {
-                println!("No symbols found.");
-            } else {
-                for result in results {
-                    println!("{}", format_discovery(&result));
-                }
-            }
-        }
-        Commands::Related { location } => {
-            let (file_path, line) = parse_location(&location)?;
-            let results = lynx.find_related(&file_path, line).await?;
-            if results.is_empty() {
-                println!("No related results found.");
-            } else {
-                for result in results {
-                    println!("{}", format_discovery(&result));
-                }
-            }
-        }
-        Commands::Flow { query } => {
-            let results = lynx.search(&query).await?;
-            if let Some(top_result) = results.first() {
-                println!("Flow for: {}", top_result.symbol_id);
-                let status = Command::new("lea")
-                    .arg("flow")
-                    .arg(&top_result.symbol_id)
-                    .status()?;
-                if !status.success() {
-                    return Err(anyhow::anyhow!("lea flow failed with status {}", status));
-                }
-            } else {
-                println!("No results found for query: {}", query);
-            }
-        }
-        Commands::Version => {
-            println!("lx version {}", env!("CARGO_PKG_VERSION"));
-        }
-        Commands::Mcp => {
-            let storage_dir = find_lynx_dir()
-                .map(|root| root.join(".lynx"))
-                .unwrap_or_else(|| cli.storage_path.clone());
+        }),
+    }
+}
 
-            let lynx = Lynx::new(&storage_dir).await?;
+/// Persistent storage directory for `lx index`.
+const STORAGE_DIR: &str = ".lynx";
 
-            let stdin = BufReader::new(io::stdin());
-            let mut stdout = io::stdout();
-            let mut lines = stdin.lines();
-
-            loop {
-                tokio::select! {
-                                    line = lines.next_line() => {
-                                        match line {
-                                            Ok(Some(line)) => {
-                                                let line = line.trim().to_string();
-                                                if line.is_empty() {
-                                                    continue;
-                                                }
-
-                let raw: serde_json::Value = match serde_json::from_str(&line) {
-                                                Ok(v) => v,
-                                                Err(err) => {
-                                                    let response = json!({"jsonrpc": "2.0", "id": null, "error": {"code": -32700, "message": "Parse error", "data": err.to_string()}});
-                                                    let mut buf = serde_json::to_string(&response)?;
-                                                    buf.push('\n');
-                                                    let _ = stdout.write_all(buf.as_bytes()).await;
-                                                    let _ = stdout.flush().await;
-                                                    continue;
-                                                }
-                                            };
-                                            let request_id = raw.get("id").cloned();
-                                            let request: McpRequest = match serde_json::from_value(raw) {
-                                                Ok(r) => r,
-                                                Err(err) => {
-                                                    let response = json!({"jsonrpc": "2.0", "id": request_id, "error": {"code": -32600, "message": "Invalid Request", "data": err.to_string()}});
-                                                    let mut buf = serde_json::to_string(&response)?;
-                                                    buf.push('\n');
-                                                    let _ = stdout.write_all(buf.as_bytes()).await;
-                                                    let _ = stdout.flush().await;
-                                                    continue;
-                                                }
-                                            };
-
-                                                let response = handle_mcp_request(&lynx, request, request_id).await;
-                                                if response.is_null() {
-                                                    continue;
-                                                }
-                                                let mut buf = serde_json::to_string(&response)?;
-                                                buf.push('\n');
-                                                if let Err(e) = stdout.write_all(buf.as_bytes()).await {
-                                                    eprintln!("write error: {}", e);
-                                                    break;
-                                                }
-                                                if let Err(e) = stdout.flush().await {
-                                                    eprintln!("flush error: {}", e);
-                                                    break;
-                                                }
-                                            }
-                                            Ok(None) => break,
-                                            Err(e) => {
-                                                eprintln!("stdin error: {}", e);
-                                                break;
-                                            }
-                                        }
-                                    }
-                                    _ = future::pending::<()>() => {}
-                                }
-            }
+fn index(path: &std::path::Path, include_tests: bool, force: bool) -> Result<()> {
+    let storage = PathBuf::from(STORAGE_DIR);
+    if storage.exists() {
+        if !force {
+            bail!("{STORAGE_DIR} already exists; pass --force to rebuild it from scratch");
         }
-        Commands::Init { path } => {
-            println!("Initializing indexes at {:?}", path);
-            let mut lea_child = Command::new("lea")
-                .arg("index")
-                .arg(&path)
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .spawn()?;
-            lynx.index_repository(&path).await?;
-            let status = lea_child.wait()?;
-            if !status.success() {
-                return Err(anyhow::anyhow!("lea index failed with status {}", status));
-            }
-            println!("Initialization complete.");
-        }
+        std::fs::remove_dir_all(&storage)
+            .with_context(|| format!("removing existing {}", storage.display()))?;
     }
 
+    // Stage the index outside the workspace and only materialize ./.lynx
+    // afterwards: the engine's exclusion list does not skip `.lynx`, so a
+    // storage directory inside the walked tree would index itself.
+    let root = path
+        .canonicalize()
+        .with_context(|| format!("resolving {}", path.display()))?;
+    println!("Indexing {} into {}/", root.display(), STORAGE_DIR);
+    let session = lynx_mcp::Session::open(&root, include_tests)?;
+    let status = session.engine().index_status();
+    println!(
+        "Indexed {} files, {} symbols, {} relations (capability {}).",
+        status.file_count,
+        status.symbol_count,
+        status.relation_count,
+        capability_name(status.capability_level),
+    );
+    session.persist(&storage)
+}
+
+/// Opens an ephemeral retrieval session over the resolved workspace.
+fn open_session() -> Result<lynx_mcp::Session> {
+    let root = workspace_root()?;
+    lynx_mcp::Session::open(&root, false)
+}
+
+fn search(query: &str, limit: usize, mode: &str) -> Result<()> {
+    let parsed_mode = parse_mode(mode)?;
+    let evidence = open_session()?.engine().search(query, parsed_mode, limit)?;
+    if evidence.is_empty() {
+        println!("No results found.");
+        return Ok(());
+    }
+    for item in &evidence {
+        println!("{}", evidence_line(item));
+    }
     Ok(())
 }
 
-fn parse_location(location: &str) -> Result<(String, usize)> {
-    let mut parts = location.rsplitn(2, ':');
-    let line_part = parts
-        .next()
-        .ok_or_else(|| anyhow::anyhow!("Missing line number"))?;
-    let file_part = parts
-        .next()
-        .ok_or_else(|| anyhow::anyhow!("Missing file path"))?;
-    let line: usize = line_part
-        .parse()
-        .map_err(|_| anyhow::anyhow!("Invalid line number"))?;
-    Ok((file_part.to_string(), line))
+fn resolve(name: &str) -> Result<()> {
+    let Some(evidence) = open_session()?.engine().resolve(name)? else {
+        bail!("symbol not found: {name}");
+    };
+    let identity = &evidence.identity;
+    println!("{}", identity.fqdn);
+    println!("  kind      {:?}", identity.kind);
+    println!("  language  {:?}", identity.language);
+    println!("  file      {}", identity.file_path.display());
+    println!(
+        "  range     lines {}-{}, bytes {}-{}",
+        evidence.range.start_line,
+        evidence.range.end_line,
+        evidence.range.start_byte,
+        evidence.range.end_byte,
+    );
+    println!("  hash      {}", identity.content_hash);
+    Ok(())
 }
 
-fn format_discovery(result: &lynx_protocol::DiscoveryResult) -> String {
-    let (kind, symbol_name) = split_symbol_id(&result.symbol_id, &result.file_path);
-    let lines = if result.start_line == result.end_line {
-        format!("{}", result.start_line)
-    } else {
-        format!("{}-{}", result.start_line, result.end_line)
+fn relations(symbol: &str) -> Result<()> {
+    let session = open_session()?;
+    let engine = session.engine();
+    let Some(evidence) = engine.resolve(symbol)? else {
+        bail!("symbol not found: {symbol}");
     };
+    let hash = &evidence.identity.content_hash;
+    let edges = engine.relations(hash, None)?;
 
-    // Normalize score to 0-100% for display
-    // BM25 + Vector scores can be small, so we use a scaling factor
-    let percentage = (result.score * 100.0).min(100.0);
+    // Enrich endpoint hashes with fqdns where resolvable.
+    let mut names: BTreeMap<String, String> = BTreeMap::new();
+    for edge in &edges {
+        for endpoint in [&edge.source_id, &edge.target_id] {
+            names.entry(endpoint.clone()).or_insert_with(|| {
+                endpoint_fqdn(engine, endpoint)
+                    .unwrap_or_else(|| format!("{}…", &endpoint[..endpoint.len().min(12)]))
+            });
+        }
+    }
 
-    let confidence = if percentage > 85.0 {
-        "High"
-    } else if percentage > 50.0 {
-        "Medium"
-    } else {
-        "Low"
-    };
+    if edges.is_empty() {
+        println!("No relations recorded for {symbol}.");
+        return Ok(());
+    }
+    println!("{} ({} edges)", evidence.identity.fqdn, edges.len());
+    for edge in &edges {
+        let (arrow, other) = if edge.source_id == *hash {
+            ("->", edge.target_id.as_str())
+        } else {
+            ("<-", edge.source_id.as_str())
+        };
+        println!("  {:?} {} {}", edge.kind, arrow, names[other]);
+    }
+    Ok(())
+}
 
-    let why_str = if result.reasons.is_empty() {
-        "".to_string()
-    } else {
-        let reasons_list: Vec<String> = result
-            .reasons
-            .iter()
-            .map(|r| format!("  - {}", r))
-            .collect();
-        format!("\n  Why:\n{}\n", reasons_list.join("\n"))
-    };
+fn context(query: &str, token_budget: usize) -> Result<()> {
+    let package = open_session()?.engine().context(query, token_budget)?;
+    println!("{}", serde_json::to_string_pretty(&package)?);
+    Ok(())
+}
 
+/// Resolves an endpoint hash's fqdn through [`Engine::inspect`]'s
+/// persistent fallback; unknown hashes degrade to a short prefix.
+fn endpoint_fqdn(engine: &Engine, hash: &str) -> Option<String> {
+    engine
+        .inspect(hash)
+        .ok()
+        .flatten()
+        .map(|evidence| evidence.identity.fqdn)
+}
+
+/// Human line for one Evidence item.
+fn evidence_line(evidence: &Evidence) -> String {
     format!(
-        "{}\n  {}\n\n  Confidence: {} ({:.0}%)\n{}\n  Symbol:\n  {}\n\n  File:\n  {}:{}\n",
-        kind.to_uppercase(),
-        symbol_name,
-        confidence,
-        percentage,
-        why_str,
-        result.symbol_id,
-        result.file_path,
-        lines
+        "[{:8.4}] {} ({:?}, {:?}) {}:{}-{} [{:?}]",
+        evidence.score,
+        evidence.identity.fqdn,
+        evidence.identity.kind,
+        evidence.identity.language,
+        evidence.identity.file_path.display(),
+        evidence.range.start_line,
+        evidence.range.end_line,
+        evidence.retrieval_mode,
     )
 }
 
-fn split_symbol_id(symbol_id: &str, file_path: &str) -> (String, String) {
-    if let Some(rest) = symbol_id.strip_prefix("file:") {
-        let display_name = Path::new(rest)
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or(rest);
-        return ("file".to_string(), display_name.to_string());
-    }
-
-    // New format: kind:package:SymbolName or kind:package:Receiver.MethodName
-    let parts: Vec<&str> = symbol_id.split(':').collect();
-    if parts.len() >= 3 {
-        let kind = parts[0];
-        let symbol_name = parts.last().unwrap_or(&"");
-        return (kind.to_string(), symbol_name.to_string());
-    }
-
-    // Fallback for old format or unexpected formats
-    let mut tail = symbol_id.rsplitn(2, ':');
-    let symbol_name = tail.next().unwrap_or(symbol_id);
-    if let Some(head) = tail.next() {
-        let mut head_parts = head.splitn(2, ':');
-        let kind = head_parts.next().unwrap_or("symbol");
-        return (kind.to_string(), symbol_name.to_string());
-    }
-
-    let fallback = Path::new(file_path)
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or(symbol_id);
-    ("symbol".to_string(), fallback.to_string())
-}
-
-fn find_lynx_dir() -> Option<PathBuf> {
-    let mut current = std::env::current_dir().ok()?;
-    loop {
-        if current.join(".lynx").is_dir() {
-            return Some(current);
-        }
-        if !current.pop() {
-            return None;
-        }
+fn parse_mode(mode: &str) -> Result<RetrievalMode> {
+    match mode.to_ascii_lowercase().as_str() {
+        "lexical" => Ok(RetrievalMode::Lexical),
+        "semantic" => Ok(RetrievalMode::Semantic),
+        "structural" => Ok(RetrievalMode::Structural),
+        "hybrid" => Ok(RetrievalMode::Hybrid),
+        other => bail!("invalid mode `{other}`; expected lexical, semantic, structural, or hybrid"),
     }
 }
 
-async fn handle_mcp_request(
-    lynx: &Lynx,
-    request: McpRequest,
-    id: Option<serde_json::Value>,
-) -> serde_json::Value {
-    let id = match id {
-        Some(id) => id,
-        None => return serde_json::Value::Null,
-    };
-
-    match request.method.as_str() {
-        "initialize" => {
-            json!({"jsonrpc": "2.0", "id": id, "result": {
-                "protocolVersion": "2024-11-05",
-                "capabilities": {
-                    "tools": {}
-                },
-                "serverInfo": {
-                    "name": "lynx-mcp",
-                    "version": env!("CARGO_PKG_VERSION")
-                }
-            }})
-        }
-        "notifications/initialized" => serde_json::Value::Null,
-        "tools/list" => {
-            json!({"jsonrpc": "2.0", "id": id, "result": {
-                "tools": [
-                    {
-                        "name": "lynx_search_graph",
-                        "description": "Search the codebase for relevant code",
-                        "inputSchema": {
-                            "type": "object",
-                            "properties": {
-                                "query": {"type": "string", "description": "Search query"}
-                            },
-                            "required": ["query"]
-                        }
-                    },
-                    {
-                        "name": "lynx_resolve_symbol",
-                        "description": "Resolve a symbol by name within the codebase",
-                        "inputSchema": {
-                            "type": "object",
-                            "properties": {
-                                "name": {"type": "string", "description": "Symbol name"}
-                            },
-                            "required": ["name"]
-                        }
-                    },
-                    {
-                        "name": "lynx_find_related",
-                        "description": "Find related implementations across the codebase",
-                        "inputSchema": {
-                            "type": "object",
-                            "properties": {
-                                "file": {"type": "string", "description": "File path"},
-                                "line": {"type": "number", "description": "Line number"}
-                            },
-                            "required": ["file", "line"]
-                        }
-                    }
-                ]
-            }})
-        }
-        "lynx_search_graph" => {
-            let query = request
-                .params
-                .as_ref()
-                .and_then(|value| value.get("query"))
-                .and_then(|value| value.as_str());
-
-            match query {
-                Some(query) => match lynx.search(query).await {
-                    Ok(results) => json!({"jsonrpc": "2.0", "id": id, "result": results}),
-                    Err(err) => {
-                        json!({"jsonrpc": "2.0", "id": id, "error": {"code": -32603, "message": err.to_string()}})
-                    }
-                },
-                None => {
-                    json!({"jsonrpc": "2.0", "id": id, "error": {"code": -32602, "message": "Missing query parameter"}})
-                }
-            }
-        }
-        "lynx_resolve_symbol" => {
-            let name = request
-                .params
-                .as_ref()
-                .and_then(|value| value.get("name"))
-                .and_then(|value| value.as_str());
-
-            match name {
-                Some(name) => match lynx.resolve_symbol(name).await {
-                    Ok(results) => json!({"jsonrpc": "2.0", "id": id, "result": results}),
-                    Err(err) => {
-                        json!({"jsonrpc": "2.0", "id": id, "error": {"code": -32603, "message": err.to_string()}})
-                    }
-                },
-                None => {
-                    json!({"jsonrpc": "2.0", "id": id, "error": {"code": -32602, "message": "Missing name parameter"}})
-                }
-            }
-        }
-        "lynx_find_related" => {
-            let file_path = request
-                .params
-                .as_ref()
-                .and_then(|value| value.get("file"))
-                .and_then(|value| value.as_str());
-            let line = request
-                .params
-                .as_ref()
-                .and_then(|value| value.get("line"))
-                .and_then(|value| value.as_u64());
-
-            match (file_path, line) {
-                (Some(file_path), Some(line)) => {
-                    match lynx.find_related(file_path, line as usize).await {
-                        Ok(results) => json!({"jsonrpc": "2.0", "id": id, "result": results}),
-                        Err(err) => {
-                            json!({"jsonrpc": "2.0", "id": id, "error": {"code": -32603, "message": err.to_string()}})
-                        }
-                    }
-                }
-                _ => {
-                    json!({"jsonrpc": "2.0", "id": id, "error": {"code": -32602, "message": "Missing file or line parameter"}})
-                }
-            }
-        }
-        _ => {
-            json!({"jsonrpc": "2.0", "id": id, "error": {"code": -32601, "message": "Method not found"}})
-        }
+fn capability_name(level: CapabilityLevel) -> &'static str {
+    match level {
+        CapabilityLevel::L0Text => "L0Text",
+        CapabilityLevel::L1Parsed => "L1Parsed",
+        CapabilityLevel::L2Symbolized => "L2Symbolized",
+        CapabilityLevel::L3Structural => "L3Structural",
     }
-}
-
-#[derive(Deserialize)]
-struct McpRequest {
-    #[allow(dead_code)]
-    id: Option<serde_json::Value>,
-    method: String,
-    params: Option<serde_json::Value>,
 }

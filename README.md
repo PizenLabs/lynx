@@ -97,93 +97,77 @@ The CLI installs under the binary name **`lx`**.
 
 ## CLI Usage
 
-Configure storage paths globally using the `-s` or `--storage-path` flag (defaults to `.lynx` in the current project root).
 
 ### 1. Indexing a Repository
-Generate the semantic and symbol index for the repository:
+Build the persistent `.lynx` index for a repository:
 ```bash
 lx index /path/to/repo
 ```
-*Note: Test, mock, and generated files are skipped by default. To include them, pass the `--include-tests` flag:*
+*Test, mock, and generated files are skipped by default. Include them with `--include-tests`; rebuild an existing `.lynx` with `--force`:*
 ```bash
-lx index /path/to/repo --include-tests
+lx index /path/to/repo --include-tests --force
 ```
 
 ### 2. Conceptual Search
-Search your indexed codebase using lexical and semantic hybrid querying:
+Fused lexical + semantic retrieval over the workspace, printing ranked evidence:
 ```bash
 lx search "jwt validation token"
-```
-*Include test and generated code in search results:*
-```bash
-lx search "jwt validation token" --include-tests
+lx search "jwt validation token" --mode semantic --limit 5
 ```
 
 ### 3. Symbol Resolution
-Resolve an exact symbol's coordinates bypassing rank-fusion:
+Resolve an exact symbol's identity coordinates bypassing rank fusion:
 ```bash
 lx resolve Login
 ```
 
-### 4. Code Proximity & Related Items
-Find related implementations and references close to a specific line:
+### 4. Structural Relations
+Print the relation graph incident to a symbol (calls, contains, implements, ...):
 ```bash
-lx related internal/auth/service.go:42
+lx relations Validate
 ```
 
-### 5. Control Flow Visualization (with Lea)
-Query a conceptual flow and visualize its downstream control path by triggering Lea automatically:
+### 5. Compiled Context Package
+Emit a token-budgeted `ContextPackage` as JSON:
 ```bash
-lx flow "user validation handler"
+lx context "user validation handler" --token-budget 2048
 ```
 
-### 6. Storage Customization
-Change the default directory for index and caching files:
-```bash
-lx --storage-path /tmp/lynx index .
-```
+Retrieval subcommands operate on a session index of the current workspace (git toplevel of the working directory); only `lx index` writes the `.lynx` artifact.
 
 ---
 
 ## MCP Server
 
-Lynx includes a built-in **Model Context Protocol (MCP)** server communicating over standard input/output (stdio). This allows LLMs and AI agents (like Claude Desktop) to discover files and symbols natively.
+Lynx includes a built-in **Model Context Protocol (MCP)** server communicating over standard input/output (stdio). This allows LLMs and AI agents (like Claude Desktop) to query symbols and relations natively.
 
 ### Running the Server
 You can launch the server directly from the CLI:
 ```bash
 lx mcp
 ```
-Or run the workspace binary directly:
+Or run the standalone binary directly (optional argument: workspace root):
 ```bash
-cargo run -p lynx-mcp -- .lynx
+cargo run -p pizen-lynx-mcp -- /path/to/repo
 ```
+The server indexes its workspace at startup and speaks newline-delimited JSON-RPC 2.0 (`initialize`, `tools/list`, `tools/call`, `ping`).
 
 ### Supported MCP Tools
 
-#### 1. `search`
-Hybrid natural-language and keyword search across chunks.
-- **Arguments**: `query` (string)
-- **JSON-RPC payload**:
-  ```json
-  {"jsonrpc":"2.0", "id": 1, "method": "search", "params": {"query": "authentication flow"}}
-  ```
+| Tool | Arguments | Primitive |
+|------|-----------|-----------|
+| `search` | `query`, `mode?`, `limit?` | Hybrid RRF search returning ranked Evidence |
+| `resolve` | `name` | Exact symbol lookup by fqdn or trailing name |
+| `inspect` | `symbol_hash` | Full evidence for a content hash |
+| `relations` | `symbol_hash`, `kind?` | Structural edges incident to a symbol |
+| `similar` | `symbol_hash` | Embedding-similarity neighbors |
+| `context` | `query`, `token_budget?` | Compiled, budget-bounded ContextPackage |
+| `index_status` | `path?` | Provenance and population counts of the served index |
 
-#### 2. `resolve_symbol`
-Instant coordinate resolution for an exact symbol name.
-- **Arguments**: `name` (string)
-- **JSON-RPC payload**:
-  ```json
-  {"jsonrpc":"2.0", "id": 2, "method": "resolve_symbol", "params": {"name": "Login"}}
-  ```
-
-#### 3. `find_related`
-Retrieves implementation chunks matching or close to a coordinate.
-- **Arguments**: `file` (string), `line` (number)
-- **JSON-RPC payload**:
-  ```json
-  {"jsonrpc":"2.0", "id": 3, "method": "find_related", "params": {"file": "internal/auth/service.go", "line": 42}}
-  ```
+Example `tools/call` frame:
+```json
+{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"search","arguments":{"query":"authentication flow"}}}
+```
 
 ---
 

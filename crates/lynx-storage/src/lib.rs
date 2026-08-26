@@ -1,97 +1,66 @@
-pub mod cache;
-pub mod schema;
-pub mod tantivy;
+//! Storage layer for Lynx: a dual-layer persistence substrate.
+//!
+//! - [`GraphStore`] — SQLite (WAL) for relational identity
+//!   ([`SymbolIdentity`]), the structural graph ([`Relation`]), and workspace
+//!   provenance ([`Snapshot`]).
+//! - [`TantivyStore`] — inverted lexical search over code chunks referencing
+//!   symbol hashes stored in SQLite.
+//!
+//! [`DualStorage`] aggregates both under one root directory.
 
-use anyhow::Result;
-use cache::EmbeddingCache;
-use lynx_protocol::{CodeChunk, SymbolRecord};
+#![forbid(unsafe_code)]
+#![deny(missing_docs)]
+
+pub mod error;
+pub mod graph_store;
+pub mod tantivy_store;
+
 use std::path::Path;
-use std::sync::Mutex;
 
-pub struct Storage {
-    inner: tantivy::TantivyStorage,
-    embedding_cache: Mutex<EmbeddingCache>,
+use lynx_protocol::SymbolIdentity;
+
+pub use error::StorageError;
+pub use graph_store::GraphStore;
+pub use tantivy_store::{LexicalDoc, LexicalHit, TantivyStore};
+
+/// Aggregate handle over the graph and lexical substrates.
+///
+/// `open(root)` lays out:
+/// - `root/graph.sqlite3` — the WAL-backed [`GraphStore`]
+/// - `root/lexical/` — the [`TantivyStore`] index directory
+pub struct DualStorage {
+    graph: GraphStore,
+    lexical: TantivyStore,
 }
 
-impl Storage {
-    pub fn new(path: &Path) -> Result<Self> {
-        std::fs::create_dir_all(path)?;
-        let cache_path = path.join("embeddings.json");
+impl DualStorage {
+    /// Opens (creating when absent) both substrates under `root`.
+    pub fn open(root: &Path) -> Result<Self, StorageError> {
+        std::fs::create_dir_all(root)?;
         Ok(Self {
-            inner: tantivy::TantivyStorage::new(path)?,
-            embedding_cache: Mutex::new(EmbeddingCache::new(cache_path)?),
+            graph: GraphStore::open(&root.join("graph.sqlite3"))?,
+            lexical: TantivyStore::open(&root.join("lexical"))?,
         })
     }
 
-    pub fn clear(&self) -> Result<()> {
-        self.inner.clear()?;
-        let mut cache = self
-            .embedding_cache
-            .lock()
-            .map_err(|e| anyhow::anyhow!("Embedding cache lock poisoned: {}", e))?;
-        cache.clear()?;
-        Ok(())
+    /// Relational identity, structural graph, and snapshot store.
+    pub fn graph(&self) -> &GraphStore {
+        &self.graph
     }
 
-    pub fn index_chunks(&self, chunks: &[CodeChunk]) -> Result<()> {
-        self.inner.index_chunks(chunks)
+    /// Lexical full-text index.
+    pub fn lexical(&self) -> &TantivyStore {
+        &self.lexical
     }
 
-    pub fn index_symbols(&self, symbols: &[SymbolRecord]) -> Result<()> {
-        self.inner.index_symbols(symbols)
-    }
-
-    pub fn search_chunks(&self, query: &str, limit: usize) -> Result<Vec<CodeChunk>> {
-        self.inner.search_chunks(query, limit)
-    }
-
-    pub fn search_chunks_with_scores(
-        &self,
-        query: &str,
-        limit: usize,
-    ) -> Result<Vec<(CodeChunk, f32)>> {
-        self.inner.search_chunks_with_scores(query, limit)
-    }
-
-    pub fn search_symbols(&self, query: &str, limit: usize) -> Result<Vec<SymbolRecord>> {
-        self.inner.search_symbols(query, limit)
-    }
-
-    pub fn resolve_symbol_exact(&self, query: &str, limit: usize) -> Result<Vec<SymbolRecord>> {
-        self.inner.resolve_symbol_exact(query, limit)
-    }
-
-    pub fn index_embeddings(&self, records: Vec<EmbeddingRecord>) -> Result<()> {
-        let mut cache = self
-            .embedding_cache
-            .lock()
-            .map_err(|e| anyhow::anyhow!("Embedding cache lock poisoned: {}", e))?;
-        cache.add_embeddings(records)
-    }
-
-    pub fn vector_search(
-        &self,
-        query_embedding: &[f32],
-        limit: usize,
-    ) -> Result<Vec<(CodeChunk, f32)>> {
-        let cache = self
-            .embedding_cache
-            .lock()
-            .map_err(|e| anyhow::anyhow!("Embedding cache lock poisoned: {}", e))?;
-        Ok(cache.vector_search(query_embedding, limit))
-    }
-
-    pub fn find_embedding_by_location(
-        &self,
-        file_path: &str,
-        line: usize,
-    ) -> Result<Option<EmbeddingRecord>> {
-        let cache = self
-            .embedding_cache
-            .lock()
-            .map_err(|e| anyhow::anyhow!("Embedding cache lock poisoned: {}", e))?;
-        Ok(cache.find_by_location(file_path, line).cloned())
+    /// Resolves a stored symbol identity by content hash through the graph.
+    pub fn get_symbol_by_hash(&self, hash: &str) -> Result<Option<SymbolIdentity>, StorageError> {
+        self.graph.get_symbol_by_hash(hash)
     }
 }
 
-pub use cache::EmbeddingRecord;
+// Compile-time guarantee: a DualStorage is safe to share across threads.
+const _: () = {
+    const fn assert_send_sync<T: Send + Sync>() {}
+    assert_send_sync::<DualStorage>();
+};
