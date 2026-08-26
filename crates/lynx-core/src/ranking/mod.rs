@@ -318,3 +318,149 @@ fn apply_generic_symbol_penalty(scored_chunks: &mut [ScoredChunk]) {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::classifier::QueryIntent;
+
+    const K: f32 = 60.0;
+    const EPS: f32 = 1e-3;
+
+    fn chunk(id: &str, path: &str, symbols: &[&str]) -> CodeChunk {
+        CodeChunk {
+            id: id.to_string(),
+            file_path: path.to_string(),
+            start_line: 1,
+            end_line: 10,
+            raw_content: "fn stub() {}".to_string(),
+            symbols_defined: symbols.iter().map(|s| s.to_string()).collect(),
+        }
+    }
+
+    #[test]
+    fn test_rank_fuses_and_deduplicates_across_channels() {
+        let c = chunk("c1", "src/auth.rs", &[]);
+        let results = Ranker::rank(
+            "totally unrelated wording",
+            QueryIntent::Semantic,
+            vec![(c.clone(), 0.9)],
+            vec![(c, 0.8)],
+            K,
+            true,
+        );
+
+        assert_eq!(results.len(), 1);
+        let r = &results[0];
+        // First place in both channels: (alpha + beta) / k normalized against
+        // the theoretical max of 2/k is exactly 0.5.
+        assert!((r.score - 0.5).abs() < EPS);
+        assert!(r.reasons.contains(&"Lexical match".to_string()));
+        assert!(r.reasons.contains(&"Semantic match".to_string()));
+        // No symbols defined -> file-path fallback id
+        assert_eq!(r.symbol_id, "file:src/auth.rs");
+    }
+
+    #[test]
+    fn test_include_tests_false_filters_test_paths() {
+        let keep = chunk("c1", "src/auth.rs", &[]);
+        let drop = chunk("c2", "tests/auth_test.rs", &[]);
+        let results = Ranker::rank(
+            "unrelated wording",
+            QueryIntent::Symbol,
+            vec![(keep.clone(), 1.0), (drop, 1.0)],
+            vec![(keep, 1.0)],
+            K,
+            false,
+        );
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].file_path, "src/auth.rs");
+    }
+
+    #[test]
+    fn test_mock_path_penalty_lowers_score_when_included() {
+        // include_tests=true keeps the candidate but mock paths take a x0.20
+        // penalty; boosts recover it above threshold yet below the cap.
+        let c = chunk(
+            "c1",
+            "mocks/user_service.rs",
+            &["func:userservice:UserService"],
+        );
+        let results = Ranker::rank(
+            "userservice",
+            QueryIntent::Symbol,
+            vec![(c.clone(), 1.0)],
+            vec![(c, 1.0)],
+            K,
+            true,
+        );
+
+        assert_eq!(results.len(), 1);
+        let r = &results[0];
+        // Without the penalty the same row would hit the 1.0 cap.
+        assert!((r.score - 0.26).abs() < EPS);
+        assert!(r
+            .reasons
+            .contains(&"Mock/Test directory penalty".to_string()));
+    }
+
+    #[test]
+    fn test_vendor_penalty_drops_below_confidence_even_when_included() {
+        // Noise suppression runs regardless of include_tests.
+        let c = chunk("c1", "vendor/lib/sqlite.rs", &["func:sqlite:sqlite3_open"]);
+        let results = Ranker::rank(
+            "sqlite3_open",
+            QueryIntent::Symbol,
+            vec![(c, 1.0)],
+            vec![],
+            K,
+            true,
+        );
+
+        // x0.01 vendor penalty pushes the row below MIN_CONFIDENCE_THRESHOLD
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_definition_boost_ranks_exact_match_first() {
+        let def = chunk("c1", "src/auth/service.rs", &["type:auth:AuthService"]);
+        let other = chunk("c2", "src/db/pool.rs", &["type:db:DatabasePool"]);
+        let results = Ranker::rank(
+            "authservice",
+            QueryIntent::Symbol,
+            vec![(other.clone(), 1.0), (def.clone(), 1.0)],
+            vec![(other, 1.0), (def, 1.0)],
+            K,
+            true,
+        );
+
+        assert_eq!(results.len(), 2);
+        // Exact symbol definition doubles the score and wins the top slot;
+        // the boosted row saturates at the 1.0 normalization cap.
+        assert_eq!(results[0].symbol_id, "type:auth:AuthService");
+        assert!((results[0].score - 1.0).abs() < EPS);
+        assert!((results[1].score - 0.5).abs() < EPS);
+        assert_eq!(results[1].symbol_id, "type:db:DatabasePool");
+    }
+
+    #[test]
+    fn test_generic_symbol_penalty_suppresses_boilerplate() {
+        let main = chunk("c1", "src/main.rs", &["func:main:main"]);
+        let real = chunk("c2", "src/server.rs", &["func:server:ServerLoop"]);
+
+        let results = Ranker::rank(
+            "startup sequence",
+            QueryIntent::Semantic,
+            vec![(main.clone(), 1.0), (real.clone(), 1.0)],
+            vec![(main, 1.0), (real, 1.0)],
+            K,
+            true,
+        );
+
+        // `main` takes the x0.2 generic penalty and falls below the
+        // confidence floor; only the substantive symbol survives.
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].symbol_id, "func:server:ServerLoop");
+    }
+}
