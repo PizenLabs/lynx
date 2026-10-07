@@ -9,5 +9,5 @@ homepage.workspace = true
 description = "Pure vector embedding provider for Lynx, backed by FastEmbed."
 
 [dependencies]
-fastembed = "6.0.0"
+fastembed = "7.1.0"
 thiserror = "2.0.18"
