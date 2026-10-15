@@ -31,4 +31,10 @@ pub enum CoreError {
         /// Actual dimension returned.
         actual: usize,
     },
+    /// The query was cancelled by its [`crate::CancelToken`].
+    #[error("query cancelled")]
+    Cancelled,
+    /// The query exceeded its deadline.
+    #[error("query timed out")]
+    TimedOut,
 }

@@ -1,0 +1,88 @@
+{
+  "description": "Ground-truth queries for the Lynx retrieval benchmark. Each query lists the fqdns that are acceptable answers; `primary` is the single best answer used for Precision@1/MRR. Query classes: exact (symbol lookup), definition (where is X implemented), conceptual (flow), structural (implements/called-by).",
+  "queries": [
+    {
+      "id": "exact-login",
+      "class": "exact",
+      "query": "Login",
+      "primary": "auth::AuthService::Login",
+      "expected": ["auth::AuthService::Login"]
+    },
+    {
+      "id": "exact-validate-token",
+      "class": "exact",
+      "query": "ValidateToken",
+      "primary": "auth::ValidateToken",
+      "expected": ["auth::ValidateToken"]
+    },
+    {
+      "id": "exact-parse-jwt",
+      "class": "exact",
+      "query": "ParseJWT",
+      "primary": "auth::ParseJWT",
+      "expected": ["auth::ParseJWT"]
+    },
+    {
+      "id": "def-token-validation",
+      "class": "definition",
+      "query": "where is token validation implemented",
+      "primary": "auth::ValidateToken",
+      "expected": [
+        "auth::ValidateToken",
+        "service::token::TokenService.validate_token"
+      ]
+    },
+    {
+      "id": "def-refresh-token",
+      "class": "definition",
+      "query": "refresh token implementation",
+      "primary": "auth::AuthService::RefreshToken",
+      "expected": [
+        "auth::AuthService::RefreshToken",
+        "service::token::TokenService.refresh_token"
+      ]
+    },
+    {
+      "id": "def-create-session",
+      "class": "definition",
+      "query": "where is a session created",
+      "primary": "web::src::session::createSession",
+      "expected": ["web::src::session::createSession"]
+    },
+    {
+      "id": "concept-auth-flow",
+      "class": "conceptual",
+      "query": "authentication flow",
+      "primary": "auth::AuthService::Login",
+      "expected": [
+        "auth::AuthService::Login",
+        "auth::ValidateToken",
+        "auth::ParseJWT"
+      ]
+    },
+    {
+      "id": "concept-session-transition",
+      "class": "conceptual",
+      "query": "session state transition",
+      "primary": "web::src::session::transitionToAuthenticated",
+      "expected": ["web::src::session::transitionToAuthenticated"]
+    },
+    {
+      "id": "def-issue-access-token",
+      "class": "definition",
+      "query": "issue access token",
+      "primary": "service::token::TokenService.issue",
+      "expected": [
+        "service::token::TokenService.issue",
+        "auth::AuthService::issueToken"
+      ]
+    },
+    {
+      "id": "def-rank-candidates",
+      "class": "definition",
+      "query": "rank retrieval candidates",
+      "primary": "retriever::Retriever::rank",
+      "expected": ["retriever::Retriever::rank"]
+    }
+  ]
+}

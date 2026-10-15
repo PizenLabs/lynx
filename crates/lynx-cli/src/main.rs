@@ -12,6 +12,7 @@ use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand};
 use lynx_core::Engine;
 
+use lynx_core::QueryOptions;
 use lynx_mcp::{workspace_root, ServerConfig};
 use lynx_protocol::{CapabilityLevel, Evidence, RetrievalMode};
 
@@ -49,6 +50,15 @@ enum Commands {
         /// Retrieval channel
         #[arg(short, long, default_value = "hybrid")]
         mode: String,
+        /// Print per-result ranking contributions and query diagnostics
+        #[arg(long)]
+        explain: bool,
+        /// Wall-clock timeout in milliseconds (aborts the query when exceeded)
+        #[arg(long)]
+        timeout_ms: Option<u64>,
+        /// Override the per-channel candidate cap (bounded internally)
+        #[arg(long)]
+        candidate_limit: Option<usize>,
     },
     /// Print exact SymbolIdentity coordinates for a symbol
     Resolve { name: String },
@@ -76,7 +86,14 @@ fn main() -> Result<()> {
             include_tests,
             force,
         } => index(&path, include_tests, force),
-        Commands::Search { query, limit, mode } => search(&query, limit, &mode),
+        Commands::Search {
+            query,
+            limit,
+            mode,
+            explain,
+            timeout_ms,
+            candidate_limit,
+        } => search(&query, limit, &mode, explain, timeout_ms, candidate_limit),
         Commands::Resolve { name } => resolve(&name),
         Commands::Relations { symbol } => relations(&symbol),
         Commands::Context {
@@ -128,17 +145,77 @@ fn open_session() -> Result<lynx_mcp::Session> {
     lynx_mcp::Session::open(&root, false)
 }
 
-fn search(query: &str, limit: usize, mode: &str) -> Result<()> {
+fn search(
+    query: &str,
+    limit: usize,
+    mode: &str,
+    explain: bool,
+    timeout_ms: Option<u64>,
+    candidate_limit: Option<usize>,
+) -> Result<()> {
     let parsed_mode = parse_mode(mode)?;
-    let evidence = open_session()?.engine().search(query, parsed_mode, limit)?;
-    if evidence.is_empty() {
-        println!("No results found.");
-        return Ok(());
+    let mut opts = QueryOptions::new();
+    if let Some(ms) = timeout_ms {
+        opts = opts.with_timeout_ms(ms);
     }
-    for item in &evidence {
-        println!("{}", evidence_line(item));
+    opts.candidate_limit = candidate_limit;
+    let session = open_session()?;
+    let outcome = session
+        .engine()
+        .search_with(query, parsed_mode, limit, &opts)?;
+    if outcome.evidence.is_empty() {
+        println!("No results found.");
+    } else {
+        for item in &outcome.evidence {
+            println!("{}", evidence_line(item));
+        }
+    }
+    if explain {
+        print_explain(query, &outcome);
     }
     Ok(())
+}
+
+/// Prints the query report and per-result ranking contributions.
+fn print_explain(query: &str, outcome: &lynx_core::SearchOutcome) {
+    let report = &outcome.report;
+    println!("\n--- explain ---");
+    println!("query_id            {}", report.query_id);
+    println!("query               {query}");
+    println!("state               {:?}", report.state);
+    println!("lexical_candidates  {}", report.lexical_candidates);
+    println!("semantic_candidates {}", report.semantic_candidates);
+    println!("fused_candidates    {}", report.fused_candidates);
+    println!("results             {}", report.results);
+    println!("total_micros        {}", report.total_micros);
+    print!("stages              ");
+    for stage in &report.stages {
+        print!("{}={}us ", stage.stage, stage.micros);
+    }
+    println!();
+    println!("\nrank  lex   sem   rrf      def?  final    symbol");
+    for (rank, contribution) in outcome.contributions.iter().enumerate() {
+        println!(
+            "{:4}  {:>4}  {:>4}  {:.5}  {:>5}  {:.5}  {}",
+            rank + 1,
+            contribution
+                .lexical_rank
+                .map(|r| r.to_string())
+                .unwrap_or_else(|| "-".into()),
+            contribution
+                .semantic_rank
+                .map(|r| r.to_string())
+                .unwrap_or_else(|| "-".into()),
+            contribution.rrf_score,
+            if contribution.definition_boost {
+                "yes"
+            } else {
+                "no"
+            },
+            contribution.final_score,
+            contribution.fqdn,
+        );
+    }
 }
 
 fn resolve(name: &str) -> Result<()> {

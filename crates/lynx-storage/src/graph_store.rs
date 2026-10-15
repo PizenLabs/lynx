@@ -45,11 +45,12 @@ impl GraphStore {
 
     /// Persists a workspace snapshot.
     ///
-    /// Inserting an already-known `content_hash` fails on the primary key.
+    /// Idempotent: re-persisting an already-known `content_hash` is a no-op, so
+    /// a session may re-index a workspace without erroring on provenance.
     pub fn save_snapshot(&self, snapshot: &Snapshot) -> Result<(), StorageError> {
         let conn = self.lock()?;
         conn.execute(
-            "INSERT INTO snapshots (content_hash, commit_hash, workspace_root, is_dirty)
+            "INSERT OR IGNORE INTO snapshots (content_hash, commit_hash, workspace_root, is_dirty)
              VALUES (?1, ?2, ?3, ?4)",
             params![
                 snapshot.content_hash,
@@ -65,8 +66,8 @@ impl GraphStore {
     ///
     /// All rows land in one transaction. Each entry pairs the identity with
     /// its source range because the schema requires NOT NULL range columns
-    /// that [`SymbolIdentity`] alone does not carry. A duplicate
-    /// `content_hash` fails the transaction (strict INSERT).
+    /// that [`SymbolIdentity`] alone does not carry. Idempotent: a duplicate
+    /// `content_hash` is ignored, so re-indexing is safe.
     pub fn insert_symbols(
         &self,
         entries: &[(SymbolIdentity, SourceRange)],
@@ -76,7 +77,7 @@ impl GraphStore {
         conn.execute("BEGIN", [])?;
         let result = entries.iter().try_for_each(|(identity, range)| {
             conn.execute(
-                "INSERT INTO symbols (
+                "INSERT OR IGNORE INTO symbols (
                     content_hash, fqdn, kind, language, file_path,
                     start_byte, end_byte, start_line, end_line, snapshot_hash
                  )
@@ -104,7 +105,7 @@ impl GraphStore {
     ///
     /// All rows land in one transaction. Foreign keys are enforced: both
     /// endpoint symbol hashes must already exist in `symbols`, otherwise the
-    /// insert fails.
+    /// insert fails. Idempotent: a duplicate edge is ignored.
     pub fn insert_relations(
         &self,
         relations: &[Relation],
@@ -114,7 +115,7 @@ impl GraphStore {
         conn.execute("BEGIN", [])?;
         let result = relations.iter().try_for_each(|relation| {
             conn.execute(
-                "INSERT INTO relations (source_id, target_id, kind, snapshot_hash)
+                "INSERT OR IGNORE INTO relations (source_id, target_id, kind, snapshot_hash)
                  VALUES (?1, ?2, ?3, ?4)",
                 params![
                     relation.source_id,
