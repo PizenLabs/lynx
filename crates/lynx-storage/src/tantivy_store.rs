@@ -1,6 +1,7 @@
 //! Tantivy-backed lexical search over code chunks keyed by symbol hash.
 
 use std::path::Path;
+use std::sync::Mutex;
 
 use tantivy::collector::TopDocs;
 use tantivy::query::QueryParser;
@@ -8,6 +9,11 @@ use tantivy::schema::{Field, Schema, TantivyDocument, Value, STORED, STRING, TEX
 use tantivy::{doc, Index, IndexWriter};
 
 use crate::error::StorageError;
+
+/// Heap budget for the single shared indexing writer. One writer is reused for
+/// an entire indexing pass; a fresh writer (with its own 15 MB arena and merge
+/// threads) is *not* created per batch.
+const WRITER_HEAP_BYTES: usize = 15_000_000;
 
 /// A code snippet indexed for lexical retrieval.
 ///
@@ -34,8 +40,15 @@ pub struct LexicalHit {
 }
 
 /// Inverted index over [`LexicalDoc`]s stored in a caller-provided directory.
+///
+/// A single [`IndexWriter`] is created lazily on the first [`Self::add_documents`]
+/// and reused until [`Self::commit`]. This is the fix for the per-file writer
+/// churn that dominated indexing cost: creating and committing a writer for
+/// every file spawned merge threads and rewrote the segment metadata on each
+/// call, making indexing O(files) heavy and mmap'ing many transient segments.
 pub struct TantivyStore {
     index: Index,
+    writer: Mutex<Option<IndexWriter>>,
     symbol_hash: Field,
     code_snippet: Field,
     language: Field,
@@ -61,6 +74,7 @@ impl TantivyStore {
 
         Ok(Self {
             index,
+            writer: Mutex::new(None),
             symbol_hash,
             code_snippet,
             language,
@@ -68,9 +82,18 @@ impl TantivyStore {
         })
     }
 
-    /// Indexes documents in one committed batch.
+    /// Appends documents to the shared indexing writer.
+    ///
+    /// Documents are not searchable until [`Self::commit`] is called. The writer
+    /// is created on first use and reused across calls, so callers may append
+    /// incrementally (e.g. one batch per file) without paying writer
+    /// construction and commit cost per call.
     pub fn add_documents(&self, docs: &[LexicalDoc]) -> Result<(), StorageError> {
-        let mut writer: IndexWriter = self.index.writer(15_000_000)?;
+        let mut guard = self.lock_writer()?;
+        let writer = match guard.as_mut() {
+            Some(writer) => writer,
+            None => guard.insert(self.index.writer(WRITER_HEAP_BYTES)?),
+        };
         for doc in docs {
             writer.add_document(doc!(
                 self.symbol_hash => doc.symbol_hash.as_str(),
@@ -79,17 +102,39 @@ impl TantivyStore {
                 self.file_path => doc.file_path.as_str(),
             ))?;
         }
-        writer.commit()?;
         Ok(())
+    }
+
+    /// Commits all pending documents and releases the writer.
+    ///
+    /// Idempotent: a commit with no pending writer is a no-op. Dropping the
+    /// writer after commit guarantees the on-disk index is quiescent, so a
+    /// caller may move/copy the index directory (see `Session::persist`).
+    pub fn commit(&self) -> Result<(), StorageError> {
+        let mut guard = self.lock_writer()?;
+        if let Some(mut writer) = guard.take() {
+            writer.commit()?;
+        }
+        Ok(())
+    }
+
+    fn lock_writer(&self) -> Result<std::sync::MutexGuard<'_, Option<IndexWriter>>, StorageError> {
+        self.writer
+            .lock()
+            .map_err(|poisoned| StorageError::Poisoned(poisoned.to_string()))
     }
 
     /// Full-text search over snippet content, language, and file path;
     /// returns at most `limit` hits ordered by descending relevance.
+    ///
+    /// Any pending (uncommitted) documents are committed first so the reader
+    /// observes a consistent snapshot.
     pub fn search_snippets(
         &self,
         query: &str,
         limit: usize,
     ) -> Result<Vec<LexicalHit>, StorageError> {
+        self.commit()?;
         let parser = QueryParser::for_index(
             &self.index,
             vec![self.code_snippet, self.language, self.file_path],

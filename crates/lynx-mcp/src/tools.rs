@@ -27,7 +27,8 @@ pub(crate) fn definitions() -> Value {
                     "properties": {
                         "query": {"type": "string", "description": "Natural-language or identifier query"},
                         "mode": {"type": "string", "enum": ["lexical", "semantic", "structural", "hybrid"], "description": "Retrieval channel (default: hybrid)"},
-                        "limit": {"type": "integer", "minimum": 1, "maximum": 100, "description": "Maximum results (default: 10)"}
+                        "limit": {"type": "integer", "minimum": 1, "maximum": 100, "description": "Maximum results (default: 10)"},
+                        "timeout_ms": {"type": "integer", "minimum": 0, "description": "Wall-clock timeout in milliseconds; the query aborts when exceeded"}
                     },
                     "required": ["query"]
                 }
@@ -72,7 +73,8 @@ pub(crate) fn definitions() -> Value {
                 "inputSchema": {
                     "type": "object",
                     "properties": {
-                        "symbol_hash": {"type": "string", "description": "Symbol content hash"}
+                        "symbol_hash": {"type": "string", "description": "Symbol content hash"},
+                        "timeout_ms": {"type": "integer", "minimum": 0, "description": "Wall-clock timeout in milliseconds"}
                     },
                     "required": ["symbol_hash"]
                 }
@@ -84,7 +86,8 @@ pub(crate) fn definitions() -> Value {
                     "type": "object",
                     "properties": {
                         "query": {"type": "string", "description": "Query to assemble context for"},
-                        "token_budget": {"type": "integer", "minimum": 1, "description": "Token ceiling (default: 2048)"}
+                        "token_budget": {"type": "integer", "minimum": 1, "description": "Token ceiling (default: 2048)"},
+                        "timeout_ms": {"type": "integer", "minimum": 0, "description": "Wall-clock timeout in milliseconds"}
                     },
                     "required": ["query"]
                 }
@@ -171,14 +174,16 @@ fn search(engine: &Engine, params: &Value) -> Result<Value, ToolFailure> {
         query: String,
         mode: Option<String>,
         limit: Option<u32>,
+        timeout_ms: Option<u64>,
     }
     let p: Params = parse(params)?;
     let mode = parse_mode(p.mode.as_deref())?;
     let limit = clamp_limit(p.limit);
-    let evidence = engine
-        .search(&p.query, mode, limit)
-        .map_err(|e| ToolFailure::internal(e.to_string()))?;
-    Ok(serde_json::to_value(evidence).expect("Evidence serializes"))
+    let opts = options_with_timeout(p.timeout_ms);
+    let outcome = engine
+        .search_with(&p.query, mode, limit, &opts)
+        .map_err(query_error)?;
+    Ok(serde_json::to_value(outcome.evidence).expect("Evidence serializes"))
 }
 
 fn resolve(engine: &Engine, params: &Value) -> Result<Value, ToolFailure> {
@@ -226,11 +231,13 @@ fn similar(engine: &Engine, params: &Value) -> Result<Value, ToolFailure> {
     #[derive(Deserialize)]
     struct Params {
         symbol_hash: String,
+        timeout_ms: Option<u64>,
     }
     let p: Params = parse(params)?;
+    let opts = options_with_timeout(p.timeout_ms);
     let evidence = engine
-        .similar(&p.symbol_hash, DEFAULT_LIMIT)
-        .map_err(|e| ToolFailure::internal(e.to_string()))?;
+        .similar_with(&p.symbol_hash, DEFAULT_LIMIT, &opts)
+        .map_err(query_error)?;
     Ok(serde_json::to_value(evidence).expect("Vec<Evidence> serializes"))
 }
 
@@ -239,12 +246,15 @@ fn context(engine: &Engine, params: &Value) -> Result<Value, ToolFailure> {
     struct Params {
         query: String,
         token_budget: Option<u32>,
+        timeout_ms: Option<u64>,
     }
     let p: Params = parse(params)?;
     let budget = p.token_budget.map_or(DEFAULT_TOKEN_BUDGET, |b| b as usize);
+    let opts = options_with_timeout(p.timeout_ms);
     let package = engine
-        .context(&p.query, budget)
-        .map_err(|e| ToolFailure::internal(e.to_string()))?;
+        .context_with(&p.query, budget, &opts)
+        .map_err(query_error)?
+        .0;
     Ok(serde_json::to_value(package).expect("ContextPackage serializes"))
 }
 
@@ -318,6 +328,21 @@ fn parse_relation_kind(kind: &str) -> Result<RelationKind, ToolFailure> {
 
 fn clamp_limit(limit: Option<u32>) -> usize {
     limit.map_or(DEFAULT_LIMIT, |l| l.clamp(1, 100) as usize)
+}
+
+/// Builds query options from an optional millisecond timeout.
+fn options_with_timeout(timeout_ms: Option<u64>) -> lynx_core::QueryOptions {
+    let opts = lynx_core::QueryOptions::new();
+    match timeout_ms {
+        Some(ms) => opts.with_timeout_ms(ms),
+        None => opts,
+    }
+}
+
+/// Maps a core query error to a tool failure, distinguishing cancellation and
+/// timeout (caller-enforced bounds, reported as internal failures).
+fn query_error(error: lynx_core::CoreError) -> ToolFailure {
+    ToolFailure::internal(error.to_string())
 }
 
 /// Path equality tolerant of trailing separators and unresolved symlinks.

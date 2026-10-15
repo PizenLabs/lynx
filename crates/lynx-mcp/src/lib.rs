@@ -304,4 +304,60 @@ mod tests {
         }
         assert!(!edges.as_array().unwrap().is_empty());
     }
+
+    #[test]
+    fn malformed_frame_is_contained_as_parse_error() {
+        let fixture = fixture_session();
+        let response = rpc::handle_for_test(&fixture.session, "not json at all").unwrap();
+        assert!(
+            response.contains("-32700"),
+            "expected parse error: {response}"
+        );
+        // The server is still usable afterwards.
+        let ok = rpc::handle_for_test(&fixture.session, &request(20, "ping", "{}")).unwrap();
+        assert!(ok.contains("\"result\""));
+    }
+
+    #[test]
+    fn search_timeout_is_enforced_per_call() {
+        let fixture = fixture_session();
+        let response = rpc::handle_for_test(
+            &fixture.session,
+            &request(
+                21,
+                "tools/call",
+                r#"{"name":"search","arguments":{"query":"Validate","timeout_ms":0}}"#,
+            ),
+        )
+        .unwrap();
+        let result = result_of(&response);
+        assert_eq!(result["isError"], Value::Bool(true));
+        assert!(result["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("timed out"));
+    }
+
+    #[test]
+    fn repeated_calls_are_stable() {
+        let fixture = fixture_session();
+        let first = rpc::handle_for_test(
+            &fixture.session,
+            &request(30, "search", r#"{"query":"Validate","limit":5}"#),
+        )
+        .unwrap();
+        let first_result = result_of(&first);
+        for id in 31..80 {
+            let again = rpc::handle_for_test(
+                &fixture.session,
+                &request(id, "search", r#"{"query":"Validate","limit":5}"#),
+            )
+            .unwrap();
+            assert_eq!(
+                first_result,
+                result_of(&again),
+                "response drifted at id {id}"
+            );
+        }
+    }
 }

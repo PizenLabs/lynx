@@ -2079,6 +2079,7 @@ dependencies = [
  "pizen-lynx-protocol",
  "pizen-lynx-storage",
  "serde",
+ "serde_json",
  "tempfile",
  "thiserror",
  "walkdir",
