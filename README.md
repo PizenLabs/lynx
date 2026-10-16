@@ -214,13 +214,15 @@ Prebuilt binaries are built natively per target and published with a
 | Platform | Architecture | Artifact | Status |
 |---|---|---|---|
 | macOS | arm64 (Apple Silicon) | `lynx-vX.Y.Z-darwin-arm64.tar.gz` | Validated |
-| macOS | x86_64 (Intel) | `lynx-vX.Y.Z-darwin-x86_64.tar.gz` | CI-native |
 | Linux | x86_64 | `lynx-vX.Y.Z-linux-x86_64.tar.gz` | CI-native |
 | Linux | arm64 | `lynx-vX.Y.Z-linux-arm64.tar.gz` | CI-native |
+| macOS | x86_64 (Intel) | — | **Unsupported** |
 | Windows | — | — | **Unsupported** |
 
 "CI-native" means the target is built and validated on a native runner by the
-release workflow. See
+release workflow. macOS Intel (x86_64) is unsupported because the embedding
+engine is backed by ONNX Runtime, which no longer publishes an x86_64 macOS
+build; use an Apple Silicon Mac or build from source. See
 [`docs/architecture/release-readiness.md`](docs/architecture/release-readiness.md)
 for the exact status of each target.
 

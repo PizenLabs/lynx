@@ -122,6 +122,17 @@ esac
 
 PLATFORM="${OS}-${ARCH}"
 
+# macOS Intel (x86_64) is not a supported target. The embedding engine is backed
+# by ONNX Runtime, which publishes no x86_64 macOS build, so no prebuilt archive
+# exists for it. Fail clearly instead of attempting a download that cannot
+# succeed.
+if [ "$PLATFORM" = "darwin-x86_64" ]; then
+    err "unsupported platform: macOS Intel (x86_64)
+  No prebuilt binary is published for it: the embedding engine requires ONNX
+  Runtime, which has no x86_64 macOS build. Use an Apple Silicon Mac (arm64),
+  or install from source: cargo install pizen-lynx"
+fi
+
 # --- integrity of the transport ---------------------------------------------
 
 case "$LYNX_BASE_URL" in

@@ -62,15 +62,20 @@ package version fails the `version-guard` job; an invalid tag fails the
 | Target | Runner | Artifact | Checksum | Policy |
 |---|---|---|---|---|
 | macOS arm64 | `macos-14` | `lynx-vX.Y.Z-darwin-arm64.tar.gz` | in `SHA256SUMS` | REQUIRED (validated locally) |
-| macOS x86_64 | `macos-15-intel` | `lynx-vX.Y.Z-darwin-x86_64.tar.gz` | in `SHA256SUMS` | REQUIRED (CI-native) |
 | Linux x86_64 | `ubuntu-24.04` | `lynx-vX.Y.Z-linux-x86_64.tar.gz` | in `SHA256SUMS` | REQUIRED (CI-native) |
 | Linux arm64 | `ubuntu-24.04-arm` | `lynx-vX.Y.Z-linux-arm64.tar.gz` | in `SHA256SUMS` | REQUIRED (CI-native; runner availability CONDITIONAL) |
+| macOS x86_64 | — | — | — | **UNSUPPORTED** (no upstream ONNX Runtime build) |
 | Windows | — | — | — | **UNSUPPORTED** |
 
 "CI-native" means the target is built and validated natively by the release
 workflow but has not been executed in the environment where this phase was
 developed. A declared target that cannot be built fails the release
 (fail-closed); no partial artifact set is published.
+
+macOS Intel (x86_64) is deliberately absent: the embedding engine is backed by
+ONNX Runtime (via `fastembed`/`ort`), and upstream ONNX Runtime no longer
+publishes an x86_64 macOS build, so the target cannot be built at all. It is not
+declared, `install.sh` rejects it explicitly, and no artifact is claimed.
 
 ## 3. crates.io package matrix (publish order)
 
@@ -170,15 +175,20 @@ tests/distribution/clean_machine_test.sh
 1. **Unverified-on-this-host platforms.** Only macOS arm64 was executed here.
    The other matrix targets are wired to native CI runners and are gated by the
    release job.
-2. **`ubuntu-24.04-arm` availability.** arm64 GitHub-hosted runners depend on the
+2. **macOS Intel (x86_64) is unsupported.** The embedding engine is backed by
+   ONNX Runtime, and no upstream x86_64 macOS build exists (neither the
+   `fastembed`/`ort` prebuilt binaries nor Microsoft's own release assets), so
+   the target cannot be built. It is not in the matrix and `install.sh` rejects
+   it explicitly.
+3. **`ubuntu-24.04-arm` availability.** arm64 GitHub-hosted runners depend on the
    repository's plan; if the runner is unavailable, the `build` job fails and no
    release is published (fail-closed, not fail-silent).
-3. **First index needs network.** The embedding model is fetched once into
+4. **First index needs network.** The embedding model is fetched once into
    `$HOME/.cache/lynx/fastembed`; a fully offline first index is not supported.
-4. **macOS notarization/signing.** Not present; binaries are unsigned. Checksums
+5. **macOS notarization/signing.** Not present; binaries are unsigned. Checksums
    cover transport integrity, not publisher authenticity.
-5. **No Windows.** Explicitly unsupported and rejected by the installer.
-6. **crates.io requires the ordered publish.** Because the workspace is not a
+6. **No Windows.** Explicitly unsupported and rejected by the installer.
+7. **crates.io requires the ordered publish.** Because the workspace is not a
    single crate, publishing `pizen-lynx` requires the six internal crates to be
    published first; the hermetic registry test proves the graph installs without
    requiring credentials.

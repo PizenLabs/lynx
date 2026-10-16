@@ -225,6 +225,14 @@ else
     pass "release workflow builds no Windows target"
 fi
 
+# No macOS Intel artifact is built: upstream ONNX Runtime publishes no x86_64
+# macOS build, so the target cannot be constructed and must not be declared.
+if grep -Eqi 'x86_64-apple-darwin|macos-15-intel|macos-13' "$WORKFLOW"; then
+    fail "release workflow declares an (unsupported) macOS Intel target"
+else
+    pass "release workflow builds no macOS Intel target"
+fi
+
 # --- 5. unsupported platform never releases ---------------------------------
 
 echo "[unsupported target]"

@@ -41,9 +41,9 @@ no support claimed without a native build of the real binary.
 | Target | Runner | Artifact | Policy |
 |---|---|---|---|
 | macOS arm64 | `macos-14` | `lynx-vX.Y.Z-darwin-arm64.tar.gz` | REQUIRED — native build + validation |
-| macOS x86_64 | `macos-15-intel` | `lynx-vX.Y.Z-darwin-x86_64.tar.gz` | REQUIRED — native build + validation |
 | Linux x86_64 | `ubuntu-24.04` | `lynx-vX.Y.Z-linux-x86_64.tar.gz` | REQUIRED — native build + validation |
 | Linux arm64 | `ubuntu-24.04-arm` | `lynx-vX.Y.Z-linux-arm64.tar.gz` | REQUIRED — native build + validation; runner availability is CONDITIONAL on the repository plan |
+| macOS x86_64 | — | — | **UNSUPPORTED** — upstream ONNX Runtime ships no x86_64 macOS build, so no target is built or claimed; the installer rejects it explicitly. |
 | Windows | — | — | **UNSUPPORTED** — no target built or claimed; the installer rejects it explicitly. |
 
 A declared target that cannot be built **fails the release** (fail closed): if
