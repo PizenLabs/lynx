@@ -51,6 +51,19 @@ jobs:
       - name: Distribution tests
         run: tests/distribution/install_test.sh
 
+  release:
+    name: release classification & version guards
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+      - name: Release classification, version consistency, workflow wiring
+        run: tests/distribution/release_test.sh
+
   crates-io:
     name: crates.io packaging & registry install
     runs-on: ubuntu-24.04

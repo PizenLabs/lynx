@@ -110,7 +110,7 @@ smoke test and exits.
 
 | Variable | Effect |
 |---|---|
-| `LYNX_INCLUDE_TESTS=1` | include test/mock/generated files (standalone MCP binary) |
+| `LYNX_INCLUDE_TESTS=1` | include test/mock/generated files in a freshly built index (`lx index`, `lx mcp`) |
 
 Lynx reads no other environment variables. There is no global configuration file
 and no product-specific repository marker.

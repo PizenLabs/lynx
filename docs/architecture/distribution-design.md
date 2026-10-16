@@ -38,13 +38,17 @@ release design; Part II (§13–§18) is the public-crate and crates.io design.
 Artifacts are built on **native runners per target** — no cross-compilation, and
 no support claimed without a native build of the real binary.
 
-| Target | Runner | Artifact | Status |
+| Target | Runner | Artifact | Policy |
 |---|---|---|---|
-| macOS arm64 | `macos-14` | `lynx-vX.Y.Z-darwin-arm64.tar.gz` | built + native-validated in release CI |
-| macOS x86_64 | `macos-15-intel` | `lynx-vX.Y.Z-darwin-x86_64.tar.gz` | built + native-validated in release CI |
-| Linux x86_64 | `ubuntu-24.04` | `lynx-vX.Y.Z-linux-x86_64.tar.gz` | built + native-validated in release CI |
-| Linux arm64 | `ubuntu-24.04-arm` | `lynx-vX.Y.Z-linux-arm64.tar.gz` | built + native-validated in release CI |
+| macOS arm64 | `macos-14` | `lynx-vX.Y.Z-darwin-arm64.tar.gz` | REQUIRED — native build + validation |
+| macOS x86_64 | `macos-15-intel` | `lynx-vX.Y.Z-darwin-x86_64.tar.gz` | REQUIRED — native build + validation |
+| Linux x86_64 | `ubuntu-24.04` | `lynx-vX.Y.Z-linux-x86_64.tar.gz` | REQUIRED — native build + validation |
+| Linux arm64 | `ubuntu-24.04-arm` | `lynx-vX.Y.Z-linux-arm64.tar.gz` | REQUIRED — native build + validation; runner availability is CONDITIONAL on the repository plan |
 | Windows | — | — | **UNSUPPORTED** — no target built or claimed; the installer rejects it explicitly. |
+
+A declared target that cannot be built **fails the release** (fail closed): if
+the Linux arm64 runner is unavailable, the `build` job fails and no release is
+published. An incomplete artifact set is never uploaded.
 
 **Archive contents.** Each archive contains a single file, `lx`, at the archive
 root, mode `0755`. There are no directories, no README, no data files. The
@@ -68,10 +72,21 @@ release cannot be published.
 - Single source of truth: `[workspace.package] version` in `Cargo.toml`.
 - A release is a tag `vX.Y.Z` **that matches** the workspace version; the
   `version-guard` job fails the release otherwise. This closes the audit's
-  version/tag drift gap.
+  version/tag drift gap. The guard reads the **resolved** Cargo metadata
+  (`scripts/release/check_versions.sh`), not a textual grep.
+- Tag classification is strict SemVer, implemented once in
+  `scripts/release/classify_tag.sh` (the workflow and the tests both call it):
+  - `vX.Y.Z` — **stable**; builds and publishes production binaries;
+  - `vX.Y.Z-<prerelease>` (`-rc.1`, `-alpha.1`, `-beta.1`, `-dev.1`, …) —
+    **prerelease**; validation only, never a production release;
+  - anything else (`v1`, `v1.0`, `v1.0.0foo`, `release-v1.0.0`) — **invalid**;
+    the pipeline fails closed.
+  See [`release-contract.md`](release-contract.md).
 - `lx --version` prints `lx X.Y.Z` (stable, script-parseable).
-- `install.sh` accepts `latest` (default) or an explicit tag, normalized so both
-  `v1.2.3` and `1.2.3` work.
+- `install.sh` accepts `latest` (default) or an explicit stable tag, normalized so
+  both `v1.2.3` and `1.2.3` work. A prerelease tag is refused unless the
+  testing-only `LYNX_ALLOW_PRERELEASE=1` override is set; `latest` resolves via
+  GitHub's `/releases/latest`, which excludes prereleases.
 - Installation refuses to downgrade: if the installed version is newer than the
   requested tag, it stops with an explicit message unless `--force` is passed.
 
@@ -119,7 +134,12 @@ existing `lx` untouched.
 
 - `LYNX_VERSION` / `--version TAG`.
 - `latest` resolves through the unauthenticated `/releases/latest` redirect — no
-  API token, no JSON parsing, no rate limit.
+  API token, no JSON parsing, no rate limit. GitHub defines `/releases/latest`
+  as the newest **non-prerelease, non-draft** release, so `latest` can never
+  resolve to `-rc`/`-alpha`/`-beta` artifacts.
+- Stable-only guard: an explicitly requested tag that is not `vMAJOR.MINOR.PATCH`
+  is refused (`refusing to install non-stable release`), so a prerelease cannot
+  be installed by accident. `LYNX_ALLOW_PRERELEASE=1` overrides this for testing.
 - Downgrade refusal (§3).
 
 ### 4.5 Modes and flags
@@ -294,11 +314,17 @@ load no embedding model.
 
 ## 12. Testing strategy
 
+- **Release classification** (`tests/distribution/release_test.sh`): the required
+  stable/prerelease/invalid tag table against the same
+  `scripts/release/classify_tag.sh` the workflow uses; tag↔package↔binary version
+  consistency (and the mismatch failure); single-binary workspace hygiene; and
+  static assertions that `.github/workflows/release.yml` can only publish from a
+  stable tag.
 - **Installer** (`tests/distribution/install_test.sh`): fresh, repeat, upgrade,
   downgrade refusal, checksum failure, missing artifact, unsupported platform,
   previous-install preservation, atomic replacement, PATH guidance,
-  download-only, HTTP rejection, `--help`. Hermetic (synthetic releases over
-  loopback).
+  download-only, HTTP rejection, prerelease refusal, `--help`. Hermetic
+  (synthetic releases over loopback).
 - **CLI** (`crates/lynx-cli/tests/cli.rs`): `--version`, `--help`, `doctor`,
   `mcp --check`, `status`-without-index.
 - **MCP** (`crates/lynx-mcp/src/lib.rs`): existing eight-tool suite plus
@@ -388,8 +414,9 @@ Rules:
 - **Internal crates are published only to satisfy Cargo.** No crate is published
   "because the pipeline is convenient". If the package boundaries ever change,
   revisit whether any published internal crate can be dropped.
-- The product binary is `lx`. `pizen-lynx-mcp` also builds a binary, but it is an
-  **auxiliary, undeclared entrypoint**; `lx mcp` is the single canonical MCP
+- The product binary is `lx`. The `pizen-lynx-mcp` crate is **library-only**: it
+  declares no binary, so there is no second packaging of the MCP server and no
+  ambiguity about the product surface. `lx mcp` is the single canonical MCP
   server (§7, §17).
 
 ## 15. Versioning authority
@@ -456,7 +483,9 @@ Every published package must be self-describing and self-contained:
   API".
 - **No absolute paths, no local-only files, no dev-only dependency required at
   install time.**
-- The `pizen-lynx-mcp` binary is not advertised as a product surface.
+- `pizen-lynx` declares exactly one binary, `lx`. The internal `pizen-lynx-mcp`
+  crate is library-only and declares none, so no auxiliary binary can be
+  mistaken for a product surface.
 
 ## 18. CI and publish gate
 

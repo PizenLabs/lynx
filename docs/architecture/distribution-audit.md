@@ -92,8 +92,15 @@ compatibility promise.
 | `lx` | `pizen-lynx` (`lynx-cli`) | **The product.** CLI (`index/status/search/resolve/relations/context/doctor`) and the canonical MCP entrypoint (`lx mcp`). |
 | `pizen-lynx-mcp` | `pizen-lynx-mcp` | **Auxiliary, undeclared.** A second packaging of the same stdio server. Not part of the advertised surface; documented nowhere in the README. |
 
-One product binary. The auxiliary binary exists but is not a product identity;
-`lx mcp` is the single canonical MCP entrypoint.
+One product binary. The auxiliary binary existed at the time of this audit but is
+not a product identity; `lx mcp` is the single canonical MCP entrypoint.
+
+> **Post-audit update (release closure).** The auxiliary `pizen-lynx-mcp` binary
+> has since been **removed**: `crates/lynx-mcp` is now library-only and declares
+> no binary, so the workspace produces exactly one binary, `lx`. The library is
+> unchanged and still backs `lx mcp`. See
+> [`release-contract.md`](release-contract.md) and
+> [`release-readiness.md`](release-readiness.md).
 
 ## I.5 Dependency publication constraints
 
@@ -180,8 +187,10 @@ eight tools. No per-consumer code paths. Validated by an independent client; see
 - Renaming would require publishing new names, deprecating the existing slots,
   and updating every reference — with no user-visible benefit. **Decision: keep
   `pizen-lynx` / `pizen-lynx-*`; do not rename.**
-- Residual risk: the auxiliary `pizen-lynx-mcp` binary could be mistaken for a
-  second product surface. It is documented as internal and undeclared.
+- Residual risk: ~~the auxiliary `pizen-lynx-mcp` binary could be mistaken for a
+  second product surface~~ — **resolved**: the auxiliary binary has been removed
+  (the crate is library-only), so the workspace produces one binary, `lx`, and
+  `lx mcp` is unambiguous.
 
 ---
 
