@@ -14,7 +14,7 @@ use lynx_core::Engine;
 
 use lynx_core::QueryOptions;
 use lynx_embed::UnavailableProvider;
-use lynx_mcp::{storage_root, workspace_root, Session};
+use lynx_mcp::{git_root, smoke_check, storage_root, workspace_root, Session};
 use lynx_protocol::{CapabilityLevel, Evidence, RetrievalMode};
 
 #[derive(Parser)]
@@ -81,11 +81,19 @@ enum Commands {
         #[arg(long)]
         no_check: bool,
     },
+    /// Print a diagnostic report of the installation, workspace, and index
+    Doctor,
     /// Launch the stdio MCP server
     Mcp {
+        /// Workspace root to serve (default: enclosing git toplevel of the CWD)
+        #[arg(value_name = "PATH")]
+        path: Option<PathBuf>,
         /// Include test, mock, and generated files in a freshly built index
         #[arg(long)]
         include_tests: bool,
+        /// Run a fast MCP protocol smoke test (no repository indexing) then exit
+        #[arg(long)]
+        check: bool,
     },
 }
 
@@ -111,10 +119,27 @@ fn main() -> Result<()> {
             token_budget,
         } => context(&query, token_budget),
         Commands::Status { no_check } => status(!no_check),
-        Commands::Mcp { include_tests } => lynx_mcp::run(lynx_mcp::ServerConfig {
-            workspace_root: workspace_root()?,
+        Commands::Doctor => doctor(),
+        Commands::Mcp {
+            path,
             include_tests,
-        }),
+            check,
+        } => {
+            if check {
+                mcp_check()
+            } else {
+                let workspace_root = match path {
+                    Some(path) => path
+                        .canonicalize()
+                        .with_context(|| format!("resolving {}", path.display()))?,
+                    None => workspace_root()?,
+                };
+                lynx_mcp::run(lynx_mcp::ServerConfig {
+                    workspace_root,
+                    include_tests,
+                })
+            }
+        }
     }
 }
 
@@ -350,6 +375,178 @@ fn status(check: bool) -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// `lx doctor`: a fast, model-free diagnostic of the installation.
+///
+/// Verifies the binary, platform, installation path, workspace detection, state
+/// writability, index presence/compatibility/freshness, and the MCP protocol
+/// contract. It never loads the embedding model and never indexes the
+/// repository, so it is safe to run anywhere and at any time. The `Status` line
+/// carries the verdict (`READY` / `NOT READY`); doctor exits non-zero only when
+/// the diagnosis itself cannot run.
+fn doctor() -> Result<()> {
+    let version = env!("CARGO_PKG_VERSION");
+    let platform = format!("{} {}", os_display(), arch_display());
+    let install = std::env::current_exe()
+        .map(|path| path.display().to_string())
+        .unwrap_or_else(|_| "<unknown>".to_string());
+
+    let repository = git_root()?;
+    let workspace = match &repository {
+        Some(root) => root.clone(),
+        None => std::env::current_dir().context("resolving current directory")?,
+    };
+    // Lynx indexes any directory; a git work tree is the common case, but a
+    // populated directory with no git metadata is still a valid workspace.
+    let repository_detected = repository.is_some() || directory_has_entries(&workspace);
+
+    let storage = storage_root(&workspace);
+    let state_ok = writable(&storage) || writable(&workspace);
+
+    // Read the index without loading the model: presence, counts, compatibility,
+    // and freshness. `freshness()` re-scans only file hashes (never embeds).
+    let db = storage.join("graph.sqlite3");
+    let index_present = db.is_file();
+    let (symbols, freshness) = if index_present {
+        match lynx_core::Engine::new(&storage, Box::new(UnavailableProvider)) {
+            Ok(engine) => {
+                let count = engine.index_status().symbol_count;
+                let fresh = engine
+                    .freshness()
+                    .map(|f| f.as_str().to_string())
+                    .unwrap_or_else(|error| format!("error: {error}"));
+                (count, fresh)
+            }
+            Err(error) => (0, format!("error: {error}")),
+        }
+    } else {
+        (0, "missing".to_string())
+    };
+
+    let mcp_ok = smoke_check().is_ok();
+    let ready = state_ok
+        && repository_detected
+        && index_present
+        && symbols > 0
+        && freshness == "fresh"
+        && mcp_ok;
+
+    println!("Lynx Doctor");
+    println!();
+    println!("Binary       OK");
+    println!("Version      {version}");
+    println!("Platform     {platform}");
+    println!("Install      {install}");
+    println!("Workspace    {}", workspace.display());
+    println!("State        {}", verdict(state_ok));
+    println!(
+        "Repository   {}",
+        if repository.is_some() {
+            "detected (git)"
+        } else if repository_detected {
+            "detected"
+        } else {
+            "not detected"
+        }
+    );
+    println!("Index        {freshness} ({symbols} symbols)");
+    println!("MCP          {}", verdict(mcp_ok));
+    println!();
+    println!("Status       {}", if ready { "READY" } else { "NOT READY" });
+
+    if !ready {
+        println!();
+        println!("Next steps");
+        if !repository_detected {
+            println!("  - run `lx doctor` inside a git work tree, or pass a path to `lx index`");
+        }
+        if !index_present {
+            println!("  - run `lx index` to build the index for this workspace");
+        } else if freshness != "fresh" {
+            println!("  - run `lx index` to refresh the {freshness} index");
+        }
+        if !state_ok {
+            println!(
+                "  - the state directory is not writable: {}",
+                storage.display()
+            );
+        }
+        if !mcp_ok {
+            println!("  - the MCP protocol check failed; run `lx mcp --check` for details");
+        }
+    }
+    Ok(())
+}
+
+/// `lx mcp --check`: a fast, in-process MCP protocol smoke test.
+///
+/// Validates start, `initialize`, tool discovery, a basic request, and clean
+/// termination without loading the embedding model or indexing a repository.
+fn mcp_check() -> Result<()> {
+    let check = smoke_check().context("running the MCP protocol smoke test")?;
+    println!("Lynx MCP check");
+    println!();
+    println!("Protocol     {}", check.protocol_version);
+    println!(
+        "Server       {} {}",
+        check.server_name, check.server_version
+    );
+    println!("Tools        {}", check.tools.join(", "));
+    println!("Initialize   OK");
+    println!("Tools list   OK");
+    println!("Request      OK");
+    println!("Shutdown     OK");
+    println!();
+    println!("Status       OK");
+    Ok(())
+}
+
+/// `OK` / `FAIL` verdict label.
+fn verdict(ok: bool) -> &'static str {
+    if ok {
+        "OK"
+    } else {
+        "FAIL"
+    }
+}
+
+/// Whether `path` is a directory containing at least one entry.
+fn directory_has_entries(path: &Path) -> bool {
+    std::fs::read_dir(path)
+        .map(|mut entries| entries.next().is_some())
+        .unwrap_or(false)
+}
+
+/// Whether `path` exists and is not marked read-only.
+///
+/// A permissions heuristic (no probe file is written), sufficient for a
+/// diagnostic; a probe would mutate the state directory doctor is inspecting.
+fn writable(path: &Path) -> bool {
+    std::fs::metadata(path)
+        .map(|meta| !meta.permissions().readonly())
+        .unwrap_or(false)
+}
+
+/// Human platform name for `std::env::consts::OS` values.
+fn os_display() -> &'static str {
+    match std::env::consts::OS {
+        "macos" => "macOS",
+        "linux" => "Linux",
+        "windows" => "Windows",
+        other => other,
+    }
+}
+
+/// Release-matrix architecture name for `std::env::consts::ARCH` values.
+///
+/// Matches the artifact scheme (`arm64`, `x86_64`) rather than Rust's target
+/// triple spelling (`aarch64`).
+fn arch_display() -> &'static str {
+    match std::env::consts::ARCH {
+        "aarch64" => "arm64",
+        other => other,
+    }
 }
 
 /// Resolves an endpoint hash's fqdn through [`Engine::inspect`]; unknown hashes

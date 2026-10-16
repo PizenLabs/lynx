@@ -44,7 +44,7 @@ pub(crate) fn serve(session: &Session) -> Result<()> {
 
 /// Handles one raw request line; `None` means "produce no response"
 /// (notifications, blank input).
-fn handle_line(session: &Session, line: &str) -> Option<String> {
+pub(crate) fn handle_line(session: &Session, line: &str) -> Option<String> {
     let frame: Frame = match serde_json::from_str(line) {
         Ok(frame) => frame,
         Err(err) => {
