@@ -31,9 +31,10 @@ mod tools;
 
 use std::path::PathBuf;
 
-use anyhow::Result;
+use anyhow::{bail, Context, Result};
+use serde_json::{json, Value};
 
-pub use session::{storage_root, workspace_root, Session, STORAGE_DIR};
+pub use session::{git_root, storage_root, workspace_root, Session, STORAGE_DIR};
 
 /// Configuration for [`run`].
 #[derive(Debug, Clone)]
@@ -53,6 +54,102 @@ pub fn run(config: ServerConfig) -> Result<()> {
         session.engine().index_status().symbol_count,
     );
     rpc::serve(&session)
+}
+
+/// Result of an in-process MCP protocol smoke check.
+#[derive(Debug, Clone)]
+pub struct SmokeCheck {
+    /// Protocol version the server advertises.
+    pub protocol_version: String,
+    /// Server name reported by `initialize`.
+    pub server_name: String,
+    /// Server version reported by `initialize`.
+    pub server_version: String,
+    /// Tool names advertised by `tools/list`, in order.
+    pub tools: Vec<String>,
+}
+
+/// Runs a fast, in-process MCP protocol smoke check.
+///
+/// Validates the full stdio contract without stdio: the server initializes,
+/// advertises its tools, answers `ping`, and serves a real tool call
+/// (`index_status`) over an ephemeral, empty workspace. It does **not** load the
+/// embedding model and does **not** index any repository, so it is safe and fast
+/// to run anywhere. A non-zero exit (an `Err`) means the MCP contract is broken.
+pub fn smoke_check() -> Result<SmokeCheck> {
+    let (session, _dir) = Session::ephemeral(Box::new(lynx_embed::UnavailableProvider))?;
+
+    let init = exchange(&session, 1, "initialize", &json!({}))?;
+    let protocol_version = init["result"]["protocolVersion"]
+        .as_str()
+        .context("initialize did not report a protocolVersion")?
+        .to_string();
+    let server_name = init["result"]["serverInfo"]["name"]
+        .as_str()
+        .unwrap_or("lynx-mcp")
+        .to_string();
+    let server_version = init["result"]["serverInfo"]["version"]
+        .as_str()
+        .unwrap_or(env!("CARGO_PKG_VERSION"))
+        .to_string();
+
+    let listed = exchange(&session, 2, "tools/list", &json!({}))?;
+    let advertised: Vec<String> = listed["result"]["tools"]
+        .as_array()
+        .context("tools/list did not return a tools array")?
+        .iter()
+        .filter_map(|tool| tool["name"].as_str().map(str::to_string))
+        .collect();
+    let expected: Vec<String> = tools::TOOL_NAMES
+        .iter()
+        .map(|name| name.to_string())
+        .collect();
+    if advertised != expected {
+        bail!("tools/list advertised {advertised:?}, expected {expected:?}");
+    }
+
+    exchange(&session, 3, "ping", &json!({}))?;
+
+    let status = exchange(
+        &session,
+        4,
+        "tools/call",
+        &json!({"name": "index_status", "arguments": {}}),
+    )?;
+    let result = &status["result"];
+    if result["isError"] == Value::Bool(true) {
+        bail!("index_status returned an error result: {result}");
+    }
+    if result["content"][0]["text"].as_str().is_none() {
+        bail!("index_status did not return a content envelope: {result}");
+    }
+
+    Ok(SmokeCheck {
+        protocol_version,
+        server_name,
+        server_version,
+        tools: advertised,
+    })
+}
+
+/// Sends one JSON-RPC frame through the transport handler and returns the
+/// parsed response, failing on a missing response or a JSON-RPC error.
+fn exchange(session: &Session, id: u64, method: &str, params: &Value) -> Result<Value> {
+    let frame = json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "method": method,
+        "params": params,
+    });
+    let line = serde_json::to_string(&frame).expect("request serializes");
+    let response = rpc::handle_line(session, &line)
+        .with_context(|| format!("`{method}` produced no response"))?;
+    let value: Value = serde_json::from_str(&response)
+        .with_context(|| format!("`{method}` returned invalid JSON: {response}"))?;
+    if let Some(error) = value.get("error") {
+        bail!("`{method}` returned a JSON-RPC error: {error}");
+    }
+    Ok(value)
 }
 
 #[cfg(test)]
@@ -132,6 +229,16 @@ mod tests {
         let value: Value = serde_json::from_str(response).expect("valid json");
         assert!(value.get("error").is_none(), "unexpected error: {response}");
         value["result"].clone()
+    }
+
+    #[test]
+    fn smoke_check_passes_and_reports_the_contract() {
+        let check = super::smoke_check().expect("smoke check should pass");
+        assert_eq!(check.protocol_version, "2024-11-05");
+        assert_eq!(check.server_name, "lynx-mcp");
+        assert_eq!(check.server_version, env!("CARGO_PKG_VERSION"));
+        assert_eq!(check.tools.len(), 8);
+        assert!(check.tools.contains(&"index_status".to_string()));
     }
 
     #[test]

@@ -2069,6 +2069,7 @@ dependencies = [
  "pizen-lynx-mcp",
  "pizen-lynx-protocol",
  "serde_json",
+ "tempfile",
 ]
 
 [[package]]

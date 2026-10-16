@@ -21,3 +21,6 @@ lynx-core.workspace = true
 lynx-embed.workspace = true
 lynx-mcp.workspace = true
 lynx-protocol.workspace = true
+
+[dev-dependencies]
+tempfile = "3.27.0"

@@ -11,14 +11,12 @@
 [![CI](https://github.com/PizenLabs/lynx/actions/workflows/ci.yml/badge.svg)](https://github.com/PizenLabs/lynx/actions)
 [![License](https://img.shields.io/badge/license-MIT-blue?style=flat-square)](./LICENSE)
 
-[What is Lynx](#what-is-lynx) •
-[Why](#why-lynx-exists) •
-[How agents use it](#how-an-agent-uses-lynx) •
-[Install](#installation) •
+[Install](#install) •
+[First repository](#first-repository) •
+[MCP](#connect-an-agent-mcp) •
 [CLI](#cli) •
-[MCP](#mcp-server) •
-[Indexes](#indexes-and-lifecycle) •
-[Limits](#supported-scope-and-limits) •
+[Platforms](#supported-platforms) •
+[Limits](#resource-and-support-envelope) •
 [Architecture](#architecture)
 
 </div>
@@ -31,7 +29,7 @@ Lynx answers a single class of question extremely well:
 
 > **Where, in this repository, does X live — and what is it connected to?**
 
-It converts developer intent ("where is token refresh handled?", "who calls
+It turns developer intent ("where is token refresh handled?", "who calls
 `ValidateToken`?", `auth::AuthService::Login`) into **stable repository
 coordinates** — a fully-qualified symbol name, its file, and its exact line
 range — plus the structural relations around it and an optional token-bounded
@@ -41,190 +39,175 @@ Lynx is **not** an agent, a planner, or an editor. It does not reason about what
 you should do, modify your code, or decide anything. It **discovers**, and it
 returns evidence; the consumer decides.
 
-Lynx is a standalone product. It has no dependency on any particular agent, IDE,
-or MCP client.
+Lynx is standalone. It has no dependency on any particular agent, IDE, or MCP
+client.
 
 ## Why Lynx exists
 
 AI agents and developer tools need reliable, fast, structured access to
 repository knowledge. Without a repository intelligence layer they repeatedly
-scan, grep, embed, and guess their way through the codebase — every query,
-every session.
+scan, grep, embed, and guess their way through the codebase — every query, every
+session.
 
 Lynx gives them one persistent, deterministic layer instead:
 
 - **Index once, query cheaply.** `lx index` writes a persistent `.lynx` index;
   search/resolve/relations/context *hydrate* it and never re-index. Queries are
   `O(query)`, not `O(repository)`.
-- **Coordinates, not text spans.** Results are symbols with stable identities,
-  so they survive across runs and processes.
+- **Coordinates, not text spans.** Results are symbols with stable identities, so
+  they survive across runs and processes.
 - **Deterministic.** Bare symbol lookups bypass ranking entirely.
 - **Bounded.** Every query has a candidate cap, a deadline, and a cancellation
   token. Memory does not scale with repository size.
 - **Consumer-agnostic.** A small CLI and a standard stdio MCP server. No SDK.
 
-## Why not just grep or a vector search?
+---
 
-They answer different questions:
+## Install
 
-| Task | Best tool |
-|---|---|
-| Find a literal string / regex in files | **ripgrep** |
-| "I want the *symbol* `ValidateToken`, wherever it is" | **Lynx** (`resolve`) |
-| "What calls this function?" | **Lynx** (`relations`) |
-| "Where is authentication implemented?" (paraphrase) | **Lynx** (`search`) |
-| "Give me the smallest context to change this behavior" | **Lynx** (`context`) |
-| Semantic similarity over an arbitrary corpus | a vector database |
+One command, no Rust/Node/Python/Docker runtime required:
 
-Lynx does not try to beat ripgrep at raw text search. It wins where repository
-*structure* matters: symbol resolution, structural navigation, relations,
-conceptual discovery, and persistent repository knowledge. On the same grounded
-tasks, ripgrep is faster but ranks worse whenever relevance or paraphrase
-matters — see `benchmarks/scripts/rg_baseline.py`.
+```bash
+curl -fsSL https://raw.githubusercontent.com/PizenLabs/lynx/main/install.sh | sh
+```
 
-## How an agent uses Lynx
+Then verify:
 
-An agent connects over MCP and asks repository questions in natural language or
-by symbol name. A typical navigation workflow is one or two calls:
+```bash
+lx --version
+lx doctor
+```
 
-1. `search("jwt authentication")` → ranked symbols with coordinates.
-2. `context("jwt authentication", token_budget=2048)` → a bounded package.
-3. `relations(symbol_hash)` → the call graph around the chosen symbol.
+The installer detects your OS and architecture, downloads the matching prebuilt
+archive, **verifies its SHA-256 checksum**, installs the `lx` binary atomically
+into `$HOME/.local/bin`, and prints PATH guidance if needed. It needs no `sudo`.
 
-Each result is a grounded coordinate the agent can act on. Measured on the
-reference corpus, these workflows reach the right symbol in 1–2 calls at a few
-milliseconds each (see the final product report).
+Inspect or control it without executing:
+
+```bash
+sh install.sh --help                 # usage
+sh install.sh --download-only=/tmp   # download + verify only, install nothing
+LYNX_VERSION=v0.1.4 sh install.sh    # pin a release
+sh install.sh --dir "$HOME/bin"      # choose the install directory
+sh install.sh --system               # explicit /usr/local/bin install (may need sudo)
+```
+
+Safety properties: HTTPS-only, checksum verified before unpacking, atomic
+replacement (a failed install leaves your existing `lx` untouched), no shell
+startup files modified, no telemetry, no background service. The installer is a
+single auditable file: [`install.sh`](./install.sh).
+
+> **First index note.** The embedding model is downloaded once into
+> `$HOME/.cache/lynx/fastembed` on the first `lx index`. Nothing else is
+> downloaded after install.
 
 ---
 
-## Installation
+## First repository
+
+From any repository (git not required):
 
 ```bash
-cargo install pizen-lynx      # installs the `lx` binary
+cd /path/to/your/repository
+
+lx doctor                          # health check: state, index, MCP
+lx index                           # build or incrementally update <repo>/.lynx
+lx status                          # counts, provenance, freshness
+
+lx search "authentication middleware"         # ranked symbols
+lx resolve ValidateToken                       # exact coordinates
+lx context "token refresh" --token-budget 2048 # bounded context package
 ```
 
-Build from source:
+`lx index` only re-parses and re-embeds files that changed since the last pass.
+Retrieval commands hydrate `<repo>/.lynx`; only `lx index` writes it.
+
+An agent needs only one more step: see below.
+
+---
+
+## Connect an agent (MCP)
+
+Lynx ships one canonical stdio MCP server, usable by any MCP client:
 
 ```bash
-cargo build --release -p pizen-lynx
+lx mcp                 # serve the current repository over stdio
+lx mcp /path/to/repo   # or pin the workspace explicitly
+lx mcp --check         # fast protocol smoke test (no indexing), then exit
 ```
 
-Requires a Rust toolchain. Embeddings run locally on CPU (no GPU, no cloud).
+Point your agent at the installed binary with the standard stdio shape:
+
+```json
+{
+  "mcpServers": {
+    "lynx": { "command": "lx", "args": ["mcp"] }
+  }
+}
+```
+
+That is the whole integration: the consumer spawns `lx`, discovers the tools, and
+queries the repository. Per-consumer file locations and snippets (Claude Desktop,
+Claude Code, Cursor, VS Code/Copilot, OpenCode, Cline/Windsurf, Zed, Gemini CLI)
+are in [`docs/mcp.md`](docs/mcp.md).
+
+| Tool | Returns |
+|---|---|
+| `search` | Ranked matches (BM25 + embeddings, RRF-fused) |
+| `resolve` / `resolve_all` | Deterministic symbol coordinates / ambiguity |
+| `inspect` | Full evidence for one symbol |
+| `relations` | Structural edges incident to a symbol |
+| `similar` | Embedding-similarity neighbors |
+| `context` | Budget-bounded `ContextPackage` |
+| `index_status` | Counts, provenance, freshness |
+
+Lynx never edits your agent configuration and never modifies unrelated files.
 
 ---
 
 ## CLI
 
-### Index a repository
+| Command | Purpose |
+|---|---|
+| `lx index [PATH] [--include-tests] [--force]` | Build/refresh the persistent index |
+| `lx status [--no-check]` | Counts, provenance, freshness |
+| `lx search <QUERY> [--mode …] [--limit N] [--explain]` | Hybrid search |
+| `lx resolve <NAME>` | Exact symbol coordinates |
+| `lx relations <SYMBOL>` | Structural edges |
+| `lx context <QUERY> [--token-budget N]` | Bounded context package |
+| `lx doctor` | Installation/index/MCP health check |
+| `lx mcp [PATH] [--check]` | stdio MCP server / smoke test |
 
-```bash
-lx index /path/to/repo             # build or incrementally update <repo>/.lynx
-lx index /path/to/repo --force     # discard and rebuild from scratch
-lx index /path/to/repo --include-tests
-```
-
-`lx index` only re-parses and re-embeds files that were added, modified, or
-deleted since the last pass. Test, mock, and generated files are skipped by
-default.
-
-### Search (conceptual / lexical)
-
-```bash
-lx search "jwt validation token"
-lx search "jwt validation token" --mode semantic --limit 5 --explain
-```
-
-### Resolve a symbol (deterministic)
-
-```bash
-lx resolve Login                  # exact identity coordinates; lists alternatives
-```
-
-### Relations
-
-```bash
-lx relations Validate             # call/containment edges incident to a symbol
-```
-
-### Context package
-
-```bash
-lx context "user validation handler" --token-budget 2048   # JSON ContextPackage
-```
-
-### Status and freshness
-
-```bash
-lx status                         # counts, provenance, and freshness
-lx status --no-check              # skip the workspace re-scan
-```
-
-### MCP server
-
-```bash
-lx mcp                            # stdio MCP server for the current workspace
-```
-
-Retrieval commands hydrate `<repo>/.lynx`; they never re-index the repository.
-Only `lx index` writes it.
+Full reference: [`docs/cli.md`](docs/cli.md).
 
 ---
 
-## MCP server
+## Supported platforms
 
-Lynx ships a minimal stdio **Model Context Protocol** server. Any MCP client can
-use it without Lynx-specific knowledge; internal storage (SQLite, Tantivy, ONNX)
-is never exposed.
+Prebuilt binaries are built natively per target and published with a
+`SHA256SUMS` manifest:
 
-| Tool | Arguments | Returns |
-|---|---|---|
-| `search` | `query`, `mode?`, `limit?`, `timeout_ms?` | Ranked `Evidence` (hybrid RRF) |
-| `resolve` | `name` | The deterministic best symbol, or null |
-| `resolve_all` | `name` | Every symbol matching a name (ambiguity) |
-| `inspect` | `symbol_hash` | Full evidence for one symbol |
-| `relations` | `symbol_hash`, `kind?` | Structural edges incident to a symbol |
-| `similar` | `symbol_hash`, `timeout_ms?` | Embedding-similarity neighbors |
-| `context` | `query`, `token_budget?`, `timeout_ms?` | Budget-bounded `ContextPackage` |
-| `index_status` | `path?`, `check_freshness?` | Counts, provenance, freshness |
+| Platform | Architecture | Artifact | Status |
+|---|---|---|---|
+| macOS | arm64 (Apple Silicon) | `lynx-vX.Y.Z-darwin-arm64.tar.gz` | Validated |
+| macOS | x86_64 (Intel) | `lynx-vX.Y.Z-darwin-x86_64.tar.gz` | CI-native |
+| Linux | x86_64 | `lynx-vX.Y.Z-linux-x86_64.tar.gz` | CI-native |
+| Linux | arm64 | `lynx-vX.Y.Z-linux-arm64.tar.gz` | CI-native |
+| Windows | — | — | **Unsupported** |
 
-Example frame:
-
-```json
-{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"search","arguments":{"query":"authentication flow"}}}
-```
-
-The server hydrates the workspace's `.lynx` index at startup (building it once
-if absent), speaks newline-delimited JSON-RPC 2.0, and contains every malformed
-frame, unknown tool, and timeout. Diagnostics go to stderr; stdout carries only
-protocol frames.
+"CI-native" means the target is built and validated on a native runner by the
+release workflow. See
+[`docs/architecture/release-readiness.md`](docs/architecture/release-readiness.md)
+for the exact status of each target.
 
 ---
 
-## Indexes and lifecycle
+## Resource and support envelope
 
-```text
-lx index   ->  <repo>/.lynx/   graph.sqlite3 (identities, relations, vectors)
-                               lexical/      (BM25 snippet index)
-           ->  exit
-lx search / resolve / relations / context / status   (hydrate, query)
-```
-
-- **Freshness** is explicit: `fresh`, `stale`, `missing`, `incompatible`,
-  `corrupt`, or `unknown`. Lynx never silently serves a stale index as current —
-  `lx status` and MCP `index_status` tell you, and `lx index` refreshes it.
-- **Incremental**: adding, editing, deleting, renaming, or moving files updates
-  only the affected state; no stale symbol, vector, or document survives.
-- **Recovery**: an incompatible schema resets to a clean substrate; a corrupt
-  artifact is detected and reported; `lx index --force` rebuilds.
-
----
-
-## Supported scope and limits
-
-**Languages.** Rust, Go, TypeScript, JavaScript, and Python are parsed to
-symbols (functions, methods, types, traits, interfaces, enums, modules) and
-intra-file relations. Markdown, YAML, JSON, TOML, and unknown text files are
-indexed as bounded file/module documents.
+**Languages.** Rust, Go, TypeScript, JavaScript, and Python are parsed to symbols
+(functions, methods, types, traits, interfaces, enums, modules) and intra-file
+relations. Markdown, YAML, JSON, TOML, and unknown text files are indexed as
+bounded file/module documents.
 
 **Explicit limitations** (not hidden):
 
@@ -235,13 +218,12 @@ indexed as bounded file/module documents.
 - **Context ordering** inherits retrieval ordering: the right symbol is usually
   in the package, not always first.
 - **Very large repositories** are supported up to the measured envelope;
-  semantic retrieval is an exact, `O(symbols)` scan (no approximate index), so
-  beyond the envelope cost grows linearly.
+  semantic retrieval is an exact `O(symbols)` scan (no approximate index).
 - **Resource requirements** are dominated by the embedding model (~250 MB
-  resident). Query memory itself is small and bounded; structural commands
-  (`resolve`, `relations`, lexical-only search, `status`) load no model at all.
+  resident). Structural commands (`resolve`, `relations`, lexical-only search,
+  `status`, `doctor`, `--version`) load no model at all.
 
-Honest, measured numbers for all of the above are in
+Honest, measured numbers are in
 [`docs/architecture/final-product-report.md`](docs/architecture/final-product-report.md)
 and [`docs/architecture/production-readiness.md`](docs/architecture/production-readiness.md).
 
@@ -278,13 +260,27 @@ persistence lifecycle, MCP stress, agent workflows, and a ripgrep baseline.
 
 ---
 
-## Contributing
+## Development
 
 ```bash
 cargo fmt --all -- --check
 cargo check --workspace
 cargo test --workspace
 cargo clippy --workspace --all-targets --all-features -- -D warnings
+```
+
+Distribution tests (installer + clean-machine install → index → query → MCP):
+
+```bash
+make dist-test
+# or
+tests/distribution/run.sh
+```
+
+Build a release binary directly:
+
+```bash
+cargo build --release -p pizen-lynx     # target/release/lx
 ```
 
 ## License

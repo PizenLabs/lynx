@@ -29,6 +29,7 @@ Desktop.ini
 
 *.log
 crash.dump
+__pycache__/
 .commit_suggest_history.json
 .fastembed_cache/
 .lynx/

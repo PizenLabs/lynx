@@ -138,6 +138,31 @@ impl Session {
         ))
     }
 
+    /// An ephemeral session over a fresh temporary substrate.
+    ///
+    /// Used by the MCP smoke check ([`crate::smoke_check`]) and tests: it opens
+    /// an empty index in a temporary directory with an injected provider, so it
+    /// neither loads the embedding model nor indexes any repository. The
+    /// returned [`tempfile::TempDir`] guard must be held for the session's
+    /// lifetime.
+    pub(crate) fn ephemeral(
+        provider: Box<dyn VectorProvider>,
+    ) -> Result<(Self, tempfile::TempDir)> {
+        let dir = tempfile::tempdir().context("creating temporary MCP workspace")?;
+        let workspace_root = dir.path().to_path_buf();
+        let storage = storage_root(&workspace_root);
+        let engine = Engine::new(&storage, provider)
+            .with_context(|| format!("opening index at {}", storage.display()))?;
+        Ok((
+            Self {
+                engine,
+                workspace_root,
+                storage_root: storage,
+            },
+            dir,
+        ))
+    }
+
     /// Engine serving this session's queries.
     pub fn engine(&self) -> &Engine {
         &self.engine
@@ -212,6 +237,16 @@ fn git_head(dir: &Path) -> Option<String> {
 pub fn workspace_root() -> Result<PathBuf> {
     let cwd = std::env::current_dir().context("resolving current directory")?;
     Ok(git_toplevel(&cwd).unwrap_or(cwd))
+}
+
+/// The enclosing git toplevel of the current directory, when it is inside a
+/// work tree.
+///
+/// `None` means the current directory is not inside a git repository, which is
+/// a valid state: Lynx indexes any directory.
+pub fn git_root() -> Result<Option<PathBuf>> {
+    let cwd = std::env::current_dir().context("resolving current directory")?;
+    Ok(git_toplevel(&cwd))
 }
 
 /// Stable per-user directory for embedding-model weights.
