@@ -3,19 +3,26 @@ members = ["crates/*"]
 resolver = "2"
 
 [workspace.package]
-version = "0.1.4"
+version = "0.2.0"
 edition = "2021"
 license = "MIT"
 repository = "https://github.com/PizenLabs/lynx"
 homepage = "https://github.com/PizenLabs/lynx"
+authors = ["PizenLabs"]
+keywords = ["lynx", "repository", "code-search", "mcp", "index"]
+categories = ["development-tools"]
 
+# The internal crates below are published to crates.io only because Cargo
+# requires a registry-resolvable dependency graph for `cargo install pizen-lynx`.
+# They are NOT a public, stable API surface. See
+# docs/architecture/distribution-design.md ("Public surface and stability").
 [workspace.dependencies]
-lynx-core = { package = "pizen-lynx-core", path = "crates/lynx-core", version = "0.1.1" }
-lynx-embed = { package = "pizen-lynx-embed", path = "crates/lynx-embed", version = "0.1.1" }
-lynx-mcp = { package = "pizen-lynx-mcp", path = "crates/lynx-mcp", version = "0.1.1" }
-lynx-parser = { package = "pizen-lynx-parser", path = "crates/lynx-parser", version = "0.1.1" }
-lynx-protocol = { package = "pizen-lynx-protocol", path = "crates/lynx-protocol", version = "0.1.1" }
-lynx-storage = { package = "pizen-lynx-storage", path = "crates/lynx-storage", version = "0.1.1" }
+lynx-core = { package = "pizen-lynx-core", path = "crates/lynx-core", version = "0.2.0" }
+lynx-embed = { package = "pizen-lynx-embed", path = "crates/lynx-embed", version = "0.2.0" }
+lynx-mcp = { package = "pizen-lynx-mcp", path = "crates/lynx-mcp", version = "0.2.0" }
+lynx-parser = { package = "pizen-lynx-parser", path = "crates/lynx-parser", version = "0.2.0" }
+lynx-protocol = { package = "pizen-lynx-protocol", path = "crates/lynx-protocol", version = "0.2.0" }
+lynx-storage = { package = "pizen-lynx-storage", path = "crates/lynx-storage", version = "0.2.0" }
 
 [profile.release]
 opt-level = 3

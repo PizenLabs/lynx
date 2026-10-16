@@ -1,28 +1,27 @@
 # Lynx Distribution & Onboarding — Release Report
 
-Final report for the distribution phase. It states what was built, what was
-validated and where, and what remains conditional. Status vocabulary throughout:
-**PASS**, **CONDITIONAL**, **FAIL**, **UNSUPPORTED**.
+Final report for the distribution phase, covering both distribution surfaces:
+
+- **Part I — Prebuilt releases + installer** (validated on macOS arm64).
+- **Part II — crates.io public crate** (this phase).
+
+Status vocabulary: **PASS**, **CONDITIONAL**, **FAIL**, **UNSUPPORTED**.
 
 Development/validation host: macOS arm64, `rustc 1.98.1`. Everything not run on
 that host is marked CONDITIONAL and is gated by native CI.
 
 ---
 
-## 1. Architecture audit
+# Part I — Prebuilt releases and installer
 
-The pre-implementation audit is [`distribution-audit.md`](distribution-audit.md).
-Key findings it drove:
+## 1. Architecture audit (baseline)
 
-- No prebuilt binaries, no release workflow, no checksums, no installer — install
-  required a Rust toolchain.
-- Version/tag drift (`Cargo.toml` `0.1.4` vs. newest tag `v0.1.3`) with no
-  artifacts tied to a version.
-- No `lx doctor`, no `lx mcp --check`, no support matrix, no consumer guidance.
-- The core was already clean: no PizenLabs runtime coupling, no telemetry, no
-  daemon, `curl | sh` safe to add without touching the engine.
-
-Status: **PASS** (audit complete and acted upon).
+The pre-implementation audit is
+[`distribution-audit.md`](distribution-audit.md) (Part II). It found: no
+prebuilt binaries, no release workflow, no checksums, no installer, no
+`lx doctor`, no `lx mcp --check`, and no support matrix. The core was already
+clean: no PizenLabs runtime coupling, no telemetry, no daemon. Status: **PASS**
+(audit complete and acted upon).
 
 ## 2. Release artifact matrix
 
@@ -35,10 +34,9 @@ Status: **PASS** (audit complete and acted upon).
 | Windows | — | — | **UNSUPPORTED** |
 
 Each archive contains a single `lx` binary at the root; the release publishes
-`SHA256SUMS`. See [`release-readiness.md`](release-readiness.md) and
-[`distribution-design.md`](distribution-design.md).
+`SHA256SUMS`. See [`release-readiness.md`](release-readiness.md).
 
-## 3. Installer design
+## 3. Installer design and security
 
 `install.sh` — POSIX `sh`, single file, `curl` + `tar` + SHA-256 only. Flow:
 detect → resolve tag → download → **verify checksum** → unpack → **atomic
@@ -46,93 +44,33 @@ rename** → verify `--version` → PATH guidance. Default directory
 `$HOME/.local/bin`; `--system` is the only path to `/usr/local/bin`. Full design
 in [`distribution-design.md`](distribution-design.md) §4.
 
-Status: **PASS**.
-
-## 4. Security model
-
 | Property | Mechanism | Status |
 |---|---|---|
 | HTTPS enforced | base URL must be `https://`; curl `--proto '=https'` | **PASS** |
 | HTTP fails | rejected unless loopback + explicit test opt-in | **PASS** |
 | Integrity before install | SHA-256 vs. `SHA256SUMS` before unpacking | **PASS** |
 | No arbitrary RCE | no `eval`, no sourcing; staged verify path | **PASS** |
-| Correct quoting | all expansions quoted | **PASS** |
-| No temp races | private `mktemp -d`; same-dir `mktemp` + rename | **PASS** |
-| Stay in bounds | writes only to staging + install dir | **PASS** |
 | No shell-config edits | PATH printed, never written | **PASS** |
-| No telemetry / no exfiltration | none present | **PASS** |
-| No privilege escalation | `sudo` only via explicit `--system` | **PASS** |
+| No telemetry / no privilege escalation | none present; `sudo` only on `--system` | **PASS** |
 
-Publisher authenticity: unsigned; checksums cover transport integrity only
-(a declared limitation, §12).
+## 4. Installation results (macOS arm64)
 
-## 5. Installation results (macOS arm64)
+`tests/distribution/install_test.sh` — all checks **PASS**: fresh install,
+repeat install (idempotent), upgrade, downgrade refusal (existing preserved),
+checksum mismatch (existing preserved), missing artifact, unsupported platform,
+atomic replacement, non-HTTPS rejection, download-only, `--help`.
 
-`tests/distribution/install_test.sh` — all checks **PASS**:
+## 5. Clean-machine results (macOS arm64)
 
-| Case | Result |
-|---|---|
-| Fresh install | PASS — installs and runs the requested version |
-| PATH guidance | PASS — printed when the dir is not on PATH |
-| Repeat install (idempotent) | PASS |
-| Upgrade | PASS |
-| Downgrade refusal (existing preserved) | PASS |
-| Checksum mismatch (existing preserved) | PASS |
-| Missing artifact (nothing installed) | PASS |
-| Unsupported platform (explicit error) | PASS |
-| Atomic replacement (no partial files) | PASS |
-| Non-HTTPS base rejected by default | PASS |
-| Download-only (writes archive + sums, installs nothing) | PASS |
-| `--help` (exit 0, prints usage) | PASS |
+`tests/distribution/clean_machine_test.sh` — all checks **PASS**: installed the
+real binary through `install.sh` into a fresh prefix; `lx --version` correct
+outside the checkout; arbitrary repository indexed and queried
+(`search`/`resolve`/`context`); `lx doctor` NOT READY → READY across indexing;
+independent MCP consumer completed
+search/resolve/context/index_status with a clean shutdown; no Cargo/Node/Python/
+PizenLabs requirement.
 
-## 6. Platform results
-
-| Platform | Binary runs | `--version` | `doctor` | `index`/query | MCP | Overall |
-|---|---|---|---|---|---|---|
-| macOS arm64 | PASS | PASS | PASS | PASS | PASS | **PASS** |
-| macOS x86_64 | CONDITIONAL | CONDITIONAL | CONDITIONAL | CONDITIONAL | CONDITIONAL | **CONDITIONAL** |
-| Linux x86_64 | CONDITIONAL | CONDITIONAL | CONDITIONAL | CONDITIONAL | CONDITIONAL | **CONDITIONAL** |
-| Linux arm64 | CONDITIONAL | CONDITIONAL | CONDITIONAL | CONDITIONAL | CONDITIONAL | **CONDITIONAL** |
-| Windows | UNSUPPORTED | — | — | — | — | **UNSUPPORTED** |
-
-CONDITIONAL targets are built and natively validated by `release.yml`; they were
-not executed on the development host.
-
-## 7. MCP compatibility results
-
-Details and configuration: [`mcp-compatibility.md`](mcp-compatibility.md) and
-[`../mcp.md`](../mcp.md).
-
-| Integration | Status |
-|---|---|
-| Independent stdio consumer (`mcp_client.py`) | **PASS** |
-| Claude Desktop / Claude Code | CONDITIONAL (config verified; handshake not run here) |
-| Cursor | CONDITIONAL |
-| VS Code (Copilot) | CONDITIONAL (config verified) |
-| OpenCode | CONDITIONAL (config verified) |
-| Cline / Windsurf | CONDITIONAL |
-| Zed / Gemini CLI | CONDITIONAL |
-
-Recorded from the PASS run: `initialize` ≈130 ms, `tools/list` = exactly the
-eight canonical tools, `search`/`resolve`/`context`/`index_status` returned
-grounded results, clean shutdown on EOF.
-
-## 8. Clean-machine results
-
-`tests/distribution/clean_machine_test.sh` (macOS arm64) — all checks **PASS**:
-
-- Installed the real release binary through `install.sh` into a fresh prefix.
-- `lx --version` correct; binary outside the development checkout.
-- Arbitrary (non-git) repository: `lx doctor` → NOT READY before index,
-  `lx index` built `.lynx`, `lx status` reported fresh, `lx search`/`resolve`/
-  `context` returned grounded results, `lx doctor` → READY after indexing.
-- Independent MCP consumer completed search/resolve/context/index_status with a
-  clean shutdown.
-- No Cargo/Node/Python/PizenLabs requirement for the installed binary; no
-  absolute development paths; state confined to `<repo>/.lynx` and
-  `$HOME/.cache/lynx`.
-
-## 9. Performance
+## 6. Performance
 
 | Metric | Value |
 |---|---|
@@ -142,83 +80,129 @@ grounded results, clean shutdown on EOF.
 | `lx doctor` | ≈37 ms |
 | `lx mcp --check` | ≈31 ms |
 | `lx mcp` startup (`initialize`) | ≈130 ms |
-| First query | ≈5 ms |
-| Warm query | ≈4.3 ms |
 
 `--version`, `doctor`, `status`, `resolve`, and `relations` load no embedding
 model. **PASS** against the "fast to start" target.
 
-## 10. Failure testing
+---
 
-| Failure | Behavior | Status |
+# Part II — crates.io public crate
+
+## 7. Audit findings
+
+The current-state audit is [`distribution-audit.md`](distribution-audit.md)
+(Part I). Key findings:
+
+- The published crates.io crates (`pizen-lynx*` **0.1.4**) were built from an
+  **older, different codebase** than the current source: published
+  `pizen-lynx-core 0.1.4` exposes `Lynx`/pipeline (async), not today's `Engine`;
+  published `pizen-lynx 0.1.4`'s CLI is not the documented product.
+- `cargo publish --dry-run -p pizen-lynx` **FAILED**: the registry dependency
+  resolved to the incompatible 0.1.4 API. `cargo install pizen-lynx` installed
+  the wrong product.
+- The published `pizen-lynx` package contained no README and no LICENSE file.
+- Version/dependency drift: workspace `0.1.4` (already on crates.io) with
+  internal requirements pinned at `^0.1.1`.
+- `pizen-lynx-common` was a dead published crate (removed from the workspace).
+
+## 8. Decisions
+
+| Decision | Choice | Rationale |
 |---|---|---|
-| Network unavailable | download fails; previous binary intact | PASS |
-| Release unavailable (404) | download fails clearly | PASS |
-| Checksum mismatch | explicit error; previous binary intact | PASS |
-| Unsupported platform | explicit error; nothing installed | PASS |
-| Permission failure | explicit "not writable"; nothing installed | PASS |
-| Missing artifact in archive | explicit error after verify | PASS |
-| Interrupted download | partial file only in staging dir; cleaned | PASS |
-| Missing PATH | install succeeds; guidance printed | PASS |
-| MCP startup failure | local to the consumer; never mutates the repo | PASS (by design + `mcp --check`) |
-| Stale index | reported as `stale`; queries answer from the indexed snapshot and staleness is surfaced | PASS (inherited) |
+| Public/private model | **Hybrid** | Cargo requires all internal deps on the registry, the workspace must not be collapsed, and the internal crates are already published. They are published but **non-contractual**; only `pizen-lynx` is public. |
+| Package name | **keep `pizen-lynx`** | `lynx` and `lynx-cli` are taken by unrelated crates; `pizen-lynx` owns the published slots and matches the repository identity. |
+| Version | **0.2.0** | The current source is a breaking rewrite of 0.1.4; 0.1.4 cannot be republished. |
+| Publish automation | **manual, ordered** | The boundary must be confirmed; the pipeline must not publish internal crates merely for convenience. |
 
-## 11. Configuration behavior
+## 9. Packaging remediation
 
-- No global config file; no product-specific repository marker; `.lynx` is
-  Lynx-owned infrastructure only.
-- The installer never edits shell startup files and never edits consumer
-  configuration.
-- `lx mcp setup` was evaluated and **not implemented** (fragile auto-detection
-  vs. documented snippets). See design §8.
-- Consumer differences live only in documentation.
+| Item | Before | After |
+|---|---|---|
+| Version | `0.1.4` (taken) | `0.2.0` |
+| Internal dep requirements | `^0.1.1` | `0.2.0` (= workspace version) |
+| README in package | absent | included (crate-local symlink) |
+| LICENSE in package | absent | included (crate-local symlink) |
+| Metadata | description only | `description`, `keywords`, `categories`, `documentation`, `homepage`, `license`, `repository` |
+| Product identity | "CLI for the Lynx platform." | names the `lx` CLI and `lx mcp` server |
 
-**PASS.**
+Status: **PASS** for all seven packages (`cargo package` succeeds with a local
+`[patch]` override and produces complete archives).
 
-## 12. Known limitations
+## 10. Registry install validation
 
-1. Only macOS arm64 was executed on the development host; other targets are
-   CI-native and CONDITIONAL (fail-closed release).
-2. `ubuntu-24.04-arm` availability depends on the repository plan.
-3. Binaries are unsigned (no notarization/codesign); checksums are the integrity
-   baseline. Publisher authenticity is not provided.
+`tests/distribution/cargo_install_test.sh` (new, this phase):
+
+1. `cargo package` every workspace crate.
+2. Assemble a local `local-registry` from those archives plus the fetched
+   third-party closure, and **replace crates.io** with it.
+3. `cargo install --offline pizen-lynx --version 0.2.0` with a fresh
+   `CARGO_HOME`.
+4. Assert `lx --version` == `lx 0.2.0`, `lx doctor` runs, the binary is outside
+   the checkout, and no development-only dependency is required.
+
+This proves the published package graph installs from a registry without the
+source checkout, without publishing credentials. Status: **PASS**.
+
+## 11. Supported installation channels
+
+| Channel | Command | Status |
+|---|---|---|
+| Installer | `curl … install.sh \| sh` | PASS (macOS arm64; CI-native elsewhere) |
+| Rust-native | `cargo install pizen-lynx` | PASS (registry install validated; public 0.2.0 publish is maintainer-run) |
+| Source | `git clone … && cargo build --release -p pizen-lynx` | PASS |
+
+All channels converge on `lx` and `lx mcp`.
+
+## 12. MCP distribution
+
+One canonical consumer-agnostic server: `lx mcp`. Protocol `2024-11-05`, eight
+tools. Consumer configuration is documentation, not code; `lx mcp setup` was
+evaluated and **not** implemented. See
+[`mcp-compatibility.md`](mcp-compatibility.md) and [`../mcp.md`](../mcp.md).
+
+## 13. Known limitations
+
+1. Only macOS arm64 was executed on the development host; other prebuilt targets
+   are CI-native and CONDITIONAL (fail-closed release).
+2. crates.io publication of 0.2.0 is **maintainer-run** (credentials); the
+   hermetic test proves the graph installs, but the real publish must be done in
+   dependency order.
+3. Binaries are unsigned (no notarization/codesign); checksums cover transport
+   integrity only.
 4. First index requires network to fetch the embedding model (~once).
 5. No Windows support.
 
-## 13. Acceptance gate (project §22)
+## 14. Final release contract
 
 | # | Item | Status |
 |---|---|---|
-| 1 | `curl` installer works | PASS (loopback-served release; real HTTPS path in CI) |
-| 2 | Installed `lx` works outside a checkout | PASS |
-| 3 | `lx doctor` works | PASS |
-| 4 | Repository can be indexed | PASS |
-| 5 | Repository can be queried | PASS |
-| 6 | MCP starts from the installed binary | PASS |
-| 7 | Independent consumer discovers tools | PASS |
-| 8 | Independent consumer queries the repository | PASS |
-| 9 | Installation is idempotent | PASS |
-| 10 | Failed install leaves the previous install intact | PASS |
-| 11 | Checksums are verified | PASS |
-| 12 | Supported platform matrix is tested | CONDITIONAL (macOS arm64 PASS; others CI-native) |
-| 13 | No hidden PizenLabs dependency | PASS |
-| 14 | No telemetry | PASS |
-| 15 | No background daemon | PASS |
-| 16 | No silent configuration mutation | PASS |
-| 17 | Documented support envelope is truthful | PASS |
+| 1 | Public package clearly defined (`pizen-lynx`) | PASS |
+| 2 | Internal crates not accidentally public (non-contractual; documented) | PASS |
+| 3 | Cargo package builds from a clean environment | PASS |
+| 4 | `cargo install` works (registry-validated) | PASS |
+| 5 | `lx` works outside the checkout | PASS |
+| 6 | Version is consistent (single source; tag guard) | PASS |
+| 7 | Supported targets are actually tested | CONDITIONAL (CI-native) |
+| 8 | Release archives deterministic; checksums verified | PASS |
+| 9 | Installer works and is idempotent | PASS |
+| 10 | Failed install preserves the previous version | PASS |
+| 11 | `lx doctor` works | PASS |
+| 12 | `lx mcp` works | PASS |
+| 13 | MCP consumer validation passes | PASS (independent client) |
+| 14 | No PizenLabs runtime dependency | PASS |
+| 15 | No hidden development dependency | PASS |
+| 16 | No telemetry / no daemon / no silent config mutation | PASS |
+| 17 | Documentation complete; support envelope truthful | PASS |
 
-## 14. Release recommendation
+## 15. Recommendation
 
-**Ship v0.1.4 (macOS arm64 validated; other matrix targets gated by native CI).**
+Ship **v0.2.0**: tag `v0.2.0` (matching the workspace version), let
+`release.yml` build and publish the prebuilt archives, then run the ordered
+`cargo publish` for the seven crates. Before announcing, confirm every matrix
+job is green; if `ubuntu-24.04-arm` is unavailable, publish the three available
+targets and mark Linux arm64 CONDITIONAL rather than claiming it.
 
-Recommendation: proceed to tag `v0.1.4` (matching the workspace version). Before
-announcing, confirm all four `release.yml` matrix jobs are green; if
-`ubuntu-24.04-arm` is unavailable on the current plan, publish the three
-available targets and mark Linux arm64 CONDITIONAL rather than claiming it.
-
-The distribution layer meets the release target: one command to install, one
-command to verify, one stable MCP server usable by many consumers — with no
-changes to the indexing engine, retrieval, persistence, or MCP protocol.
-
-**Hard stop.** No engine, retrieval, persistence, agentic, telemetry, daemon, or
-speculative MCP changes are included or recommended.
+The distribution layer meets the target: one product, one binary (`lx`), one
+canonical MCP surface (`lx mcp`), multiple installation channels, and a minimal
+public surface — with no changes to the indexing engine, retrieval,
+persistence, or MCP protocol.

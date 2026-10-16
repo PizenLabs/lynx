@@ -4,6 +4,20 @@
 surface. Retrieval subcommands **hydrate** the persistent index at
 `<repo>/.lynx`; only `lx index` writes it.
 
+## Install
+
+All channels install the same `lx` binary:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/PizenLabs/lynx/main/install.sh | sh   # fastest
+cargo install pizen-lynx                                                          # Rust-native
+git clone https://github.com/PizenLabs/lynx && cargo build --release -p pizen-lynx # source
+```
+
+Verify with `lx --version` and `lx doctor`. The installer is HTTPS-only,
+checksum-verified, atomic, and needs no `sudo`; it never edits shell startup
+files. See the [README](../README.md#install) for details.
+
 ```
 lx <command> [options]
 ```
@@ -27,13 +41,15 @@ contract. It never indexes and never loads the model (≈37 ms).
 Lynx Doctor
 
 Binary       OK
-Version      0.1.4
+Version      0.2.0
 Platform     macOS arm64
 Install      /Users/you/.local/bin/lx
 Workspace    /Users/you/project
-State        OK
+State path   /Users/you/project/.lynx
+Permissions  OK
 Repository   detected (git)
 Index        fresh (128 symbols)
+Capability   L3Structural
 MCP          OK
 
 Status       READY

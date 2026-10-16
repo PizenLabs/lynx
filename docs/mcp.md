@@ -3,6 +3,10 @@
 Lynx ships **one** canonical Model Context Protocol server. Any MCP client can
 use it; there is no Lynx-specific SDK and no per-consumer code path.
 
+Install Lynx first with any supported channel — the `curl` installer,
+`cargo install pizen-lynx`, or a source build — then point your client at the
+`lx` binary. See the [README](../README.md#install).
+
 ```bash
 lx mcp                 # stdio server for the git toplevel of the current directory
 lx mcp /path/to/repo   # explicit workspace

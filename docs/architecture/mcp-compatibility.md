@@ -32,7 +32,7 @@ down. Run as part of `tests/distribution/clean_machine_test.sh`.
 | Step | Result |
 |---|---|
 | Spawn `lx mcp` (cwd = arbitrary indexed repo) | PASS |
-| `initialize` | PASS — `protocolVersion 2024-11-05`, `serverInfo.lynx-mcp 0.1.4` |
+| `initialize` | PASS — `protocolVersion 2024-11-05`, `serverInfo.lynx-mcp 0.2.0` |
 | `tools/list` | PASS — exactly the eight canonical tools, in stable order |
 | `tools/call search` | PASS — returned ranked evidence; top hit `auth::Token` |
 | `tools/call resolve` | PASS — resolved `auth::ValidateToken` |

@@ -1,4 +1,191 @@
-# Lynx Distribution & Onboarding Audit
+# Lynx Distribution Audit
+
+This document has two parts.
+
+- **Part I — Current-state audit** is the operative description of the
+  distribution surface (workspace, public crate, crates.io, release, installer,
+  MCP). It was produced for the *distribution-architecture* phase (public crate,
+  internal workspace, release surface) at branch `refactor/crates`, HEAD
+  `191eac0`, audit host macOS arm64, `rustc 1.98.1`.
+- **Part II — Baseline audit** is the frozen pre-implementation audit from the
+  installer phase (`4491634`, `feature/install`). It is retained verbatim because
+  [`distribution-design.md`](distribution-design.md) and the release report
+  reference it as the baseline the installer layer responded to.
+
+---
+
+# Part I — Current-state audit (public crate, crates.io, release surface)
+
+Status: **audit complete; findings acted upon** (see
+[`distribution-design.md`](distribution-design.md) and
+[`distribution-release-report.md`](distribution-release-report.md)).
+
+Method: direct inspection of the workspace, `cargo metadata`, `cargo package`,
+`cargo publish --dry-run`, a comparison of the crates.io-published crates
+against the current source, and a parsed query of the crates.io registry.
+
+## I.1 Workspace graph
+
+```text
+Cargo.toml                 workspace (resolver = 2), members = ["crates/*"]
+crates/
+  lynx-protocol/           pizen-lynx-protocol   library, no I/O
+  lynx-parser/             pizen-lynx-parser     library
+  lynx-embed/              pizen-lynx-embed      library
+  lynx-storage/            pizen-lynx-storage    library
+  lynx-core/               pizen-lynx-core       library
+  lynx-mcp/                pizen-lynx-mcp        library + auxiliary binary
+  lynx-cli/                pizen-lynx            binary `lx` (the product)
+```
+
+Seven members. One of them (`lynx-cli`) is the distributable product; the other
+six are implementation crates. The workspace is **not** collapsed: internal
+modularity is preserved (a hard constraint).
+
+## I.2 Package graph (internal edges)
+
+```text
+pizen-lynx (bin: lx)
+  -> pizen-lynx-core, pizen-lynx-embed, pizen-lynx-mcp, pizen-lynx-protocol
+
+pizen-lynx-core
+  -> pizen-lynx-embed, pizen-lynx-parser, pizen-lynx-protocol, pizen-lynx-storage
+
+pizen-lynx-mcp (bin: pizen-lynx-mcp)
+  -> pizen-lynx-core, pizen-lynx-embed, pizen-lynx-protocol
+
+pizen-lynx-storage -> pizen-lynx-protocol
+pizen-lynx-parser  -> pizen-lynx-protocol
+pizen-lynx-embed   -> (no internal deps)
+pizen-lynx-protocol-> (no internal deps)
+```
+
+Acyclic, with `pizen-lynx-protocol` at the root and `pizen-lynx` at the leaf.
+External dependencies are the usual registry crates (clap, serde, rusqlite
+`bundled`, tantivy, tree-sitter-*, fastembed, anyhow, thiserror, blake3,
+walkdir).
+
+## I.3 Public / private classification
+
+The default is *internal unless there is a demonstrated external consumer*.
+
+| Package | Public product? | On crates.io? | Stable API? | Reason |
+|---|---:|---:|---:|---|
+| `pizen-lynx` | **YES** | required | **YES** (product-level) | The installable product: `lx` + `lx mcp`. |
+| `pizen-lynx-core` | no | forced by Cargo | **NO** | Internal engine. |
+| `pizen-lynx-storage` | no | forced by Cargo | **NO** | Implementation. |
+| `pizen-lynx-parser` | no | forced by Cargo | **NO** | Implementation. |
+| `pizen-lynx-embed` | no | forced by Cargo | **NO** | Implementation. |
+| `pizen-lynx-protocol` | no | forced by Cargo | **NO** | Internal contract. |
+| `pizen-lynx-mcp` | no | forced by Cargo | **NO** | Implementation; product surface is `lx mcp`. |
+| `pizen-lynx-common` | — | **stale, dead** | — | Published up to 0.1.4, then removed from the workspace. |
+
+"On crates.io: forced by Cargo" is the central finding of this audit; see I.5.
+The public/private *API* boundary is enforced by documentation and by the
+stability contract, not by registry presence. Only `pizen-lynx` carries a
+compatibility promise.
+
+## I.4 Binary ownership
+
+| Binary | Owning crate | Role |
+|---|---|---|
+| `lx` | `pizen-lynx` (`lynx-cli`) | **The product.** CLI (`index/status/search/resolve/relations/context/doctor`) and the canonical MCP entrypoint (`lx mcp`). |
+| `pizen-lynx-mcp` | `pizen-lynx-mcp` | **Auxiliary, undeclared.** A second packaging of the same stdio server. Not part of the advertised surface; documented nowhere in the README. |
+
+One product binary. The auxiliary binary exists but is not a product identity;
+`lx mcp` is the single canonical MCP entrypoint.
+
+## I.5 Dependency publication constraints
+
+Cargo requires that every *normal* and *build* dependency of a published crate
+resolve from the registry it is published to. Dev-dependencies are excluded.
+
+Consequences for this workspace:
+
+1. `cargo install pizen-lynx` can only succeed if **all six** internal crates are
+   themselves published at a compatible version. There is no way to publish
+   `pizen-lynx` with path-only internal dependencies.
+2. `cargo package -p pizen-lynx` **fails** while the internal crates are absent
+   at the required version (verified: it stops at "failed to prepare local
+   package for uploading").
+3. The `[workspace.dependencies]` version requirement is what is written into the
+   published manifest. It therefore must track the release version exactly; a
+   lagging requirement (the previous `^0.1.1` against a `0.1.4` workspace) is a
+   release-hygiene defect.
+4. Publishing order is forced by I.2: `protocol, parser, embed, storage, core,
+   mcp, pizen-lynx`.
+
+The mission's preferred "Model B" (private implementation) is **mechanically
+incompatible** with (a) the hard constraint that the workspace must not be
+collapsed and (b) the fact that the internal crates are already published and
+cannot be removed from crates.io. The audit therefore resolves to a **hybrid**:
+publish the internal crates as a Cargo necessity, and treat them as
+non-contractual implementation (see I.3 and the design document).
+
+## I.6 crates.io readiness — **FAILED at audit; remediated**
+
+Findings:
+
+- All seven crates plus `pizen-lynx-common` are published at **0.1.4**.
+- The published crates were built from an **older, different codebase** than the
+  current source. Published `pizen-lynx-core 0.1.4` exposes `Lynx` / `pipeline`
+  / `EmbedderManager` (async, tokio); the current source is a synchronous
+  `Engine` API. Published `pizen-lynx 0.1.4`'s CLI is entirely different from the
+  documented `lx doctor` / `lx mcp --check` product.
+- Therefore `cargo publish --dry-run -p pizen-lynx` **fails** (the registry
+  dependency resolves to the incompatible 0.1.4 API), and `cargo install
+  pizen-lynx` installs the **wrong product**.
+- The published `pizen-lynx` package contained **no README and no LICENSE file**
+  and no `keywords`/`categories`/`documentation` metadata.
+- Version drift: workspace `0.1.4` already exists on crates.io and cannot be
+  republished; internal dependency requirements were pinned at `^0.1.1`.
+- `pizen-lynx-common` is a **dead published crate** (removed from the workspace).
+
+Remediation (this phase): coordinated bump to **0.2.0**, dependency requirements
+aligned to the workspace version, package metadata completed, README/LICENSE
+included, and a hermetic registry-install test added.
+
+## I.7 Release artifact readiness — **PASS**
+
+Prebuilt-archive distribution is complete and independent of crates.io:
+`install.sh`, `.github/workflows/release.yml` (native builds for macOS
+arm64/x86_64, Linux x86_64/arm64), `SHA256SUMS`, and
+`tests/distribution/{install_test,clean_machine_test}.sh`. See Part II and
+[`release-readiness.md`](release-readiness.md).
+
+## I.8 Installer readiness — **PASS**
+
+`install.sh` is a single POSIX file: detect → resolve tag → download → verify
+SHA-256 → unpack → atomic rename → verify → PATH guidance. HTTPS-only, no
+`eval`, no shell-profile mutation, no telemetry, no privilege escalation. See
+Part II §10 and [`distribution-design.md`](distribution-design.md).
+
+## I.9 MCP distribution readiness — **PASS**
+
+One canonical, consumer-agnostic stdio server: `lx mcp`. Protocol `2024-11-05`,
+eight tools. No per-consumer code paths. Validated by an independent client; see
+[`mcp-compatibility.md`](mcp-compatibility.md).
+
+## I.10 Naming / branding risks
+
+- `lynx` on crates.io is **taken** by an unrelated HTTP client (`sbstp/lynx`,
+  0.2.0, 2019); `lynx-cli` is taken by an unrelated proxy service
+  (`suxin2017/lynx`, 2025). A standalone `lynx` namespace is therefore not
+  available.
+- `pizen-lynx` is the **correct and effectively forced** package name: it is
+  available, it already owns the published slots, and it matches the repository
+  identity (`github.com/PizenLabs/lynx`).
+- The `pizen-` prefix is retained on the internal crates for consistency with the
+  published slots; it does not affect the product name (Lynx) or binary (`lx`).
+- Renaming would require publishing new names, deprecating the existing slots,
+  and updating every reference — with no user-visible benefit. **Decision: keep
+  `pizen-lynx` / `pizen-lynx-*`; do not rename.**
+- Residual risk: the auxiliary `pizen-lynx-mcp` binary could be mistaken for a
+  second product surface. It is documented as internal and undeclared.
+
+---
+
+# Part II — Baseline audit (installer phase)
 
 Status: **pre-implementation audit** (phase 2 of the distribution pass).
 This document describes the repository as it exists *before* the distribution

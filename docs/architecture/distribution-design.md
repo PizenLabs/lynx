@@ -3,10 +3,12 @@
 This document specifies how Lynx is released, installed, verified, and consumed.
 It is the design that [`distribution-audit.md`](distribution-audit.md) called
 for, and it is realized by `install.sh`, `.github/workflows/release.yml`,
-`lx doctor`, `lx mcp --check`, and `tests/distribution/`.
+`lx doctor`, `lx mcp --check`, `tests/distribution/`, and the crates.io publish
+graph.
 
 The design obeys one rule above all others: **do not touch the engine**. Only
-the distribution boundary is added.
+the distribution boundary is added. Part I (§1–§12) is the installer/prebuilt
+release design; Part II (§13–§18) is the public-crate and crates.io design.
 
 ---
 
@@ -169,9 +171,11 @@ model and never indexes. Checks:
 | Platform | `OS` + arch, in release-matrix spelling (`macOS arm64`) |
 | Install | `current_exe()` |
 | Workspace | git toplevel of the CWD, else the CWD |
-| State | install/state directory is writable |
+| State path | `<workspace>/.lynx` |
+| Permissions | the state directory is writable |
 | Repository | a git work tree, or a populated directory |
-| Index | presence, symbol count, compatibility, freshness (`Engine::freshness`) |
+| Index | presence, symbol count, freshness (`Engine::freshness`) |
+| Capability | index capability level (L0–L3) |
 | MCP | in-process protocol smoke check |
 
 `Status READY` requires a fresh index and a passing MCP check; otherwise
@@ -304,5 +308,166 @@ load no embedding model.
   real binary, index an arbitrary repository, run
   status/search/resolve/context, run `doctor`, and drive the installed server
   with an independent MCP consumer.
-- **CI**: `ci.yml` runs the hermetic installer suite on Linux + macOS;
-  `release.yml` runs the full clean-machine suite natively on every target.
+- **crates.io / registry install** (`tests/distribution/cargo_install_test.sh` +
+  `make_registry.py`): `cargo package` every crate, assemble a `local-registry`
+  from the archives plus the fetched closure, replace crates.io with it, and
+  `cargo install --offline pizen-lynx`; then verify `lx --version` and
+  `lx doctor`. No publishing credentials.
+- **CI**: `ci.yml` runs the hermetic installer suite on Linux + macOS and the
+  registry-install test on Linux; `release.yml` runs the full clean-machine
+  suite natively on every target.
+
+---
+
+# Part II — Public crate, workspace boundary & crates.io
+
+## 13. Public surface and stability
+
+The product is **Lynx**, and its public conceptual surface is exactly two
+things:
+
+```text
+Lynx
+├── CLI   (lx)
+└── MCP   (lx mcp)
+```
+
+The implementation crates (core, storage, parser, embed, protocol, mcp) are
+**not** part of that surface. This is the governing rule:
+
+> **Modularity inside the workspace is not the same thing as public API.**
+
+A crate does not become public because it is technically publishable. Promoting
+an internal crate to a public API means committing to semver discipline,
+documentation, a changelog, compatibility expectations, dependency stability,
+API review, a migration policy, security maintenance, and user support.
+Internal modularity must not automatically become external API surface.
+
+### 13.1 Model A vs Model B — and the resolution
+
+- **Model A — everything public.** Publish every crate as a supported API.
+  Rejected: it commits Lynx to maintaining six implementation APIs it has no
+  evidence anyone needs, and freezes internal refactoring.
+- **Model B — public product, private implementation.** Publish only the
+  product; keep the rest private. Preferred in principle, but **mechanically
+  impossible here**: Cargo requires every normal/build dependency of a
+  published crate to resolve from the registry, the workspace must not be
+  collapsed (hard constraint), and the internal crates are already published at
+  0.1.4 and cannot be removed from crates.io.
+
+**Resolution — the hybrid.** The internal crates remain *published* (a Cargo
+necessity) but are *not a public API*: they are documented as internal,
+non-contractual implementation, and only `pizen-lynx` carries a stability
+promise. Registry presence and API commitment are separate concerns; this design
+separates them explicitly.
+
+## 14. The published crate graph
+
+Publication order is forced by the internal dependency graph (§I.2):
+
+```text
+1. pizen-lynx-protocol
+2. pizen-lynx-parser
+3. pizen-lynx-embed
+4. pizen-lynx-storage
+5. pizen-lynx-core
+6. pizen-lynx-mcp
+7. pizen-lynx          <- the product
+```
+
+Rules:
+
+- **No published crate may depend on an unpublished local-only path crate.**
+  Every internal dependency carries a `version` equal to the release version in
+  `[workspace.dependencies]`, so the normalized manifest points at registry
+  versions.
+- **Version requirements track the release.** A lagging requirement (for
+  example `^0.1.1` against a `0.1.4` workspace) is a release defect: it makes the
+  published graph ambiguous and lets an incompatible older crate satisfy the
+  requirement.
+- **Internal crates are published only to satisfy Cargo.** No crate is published
+  "because the pipeline is convenient". If the package boundaries ever change,
+  revisit whether any published internal crate can be dropped.
+- The product binary is `lx`. `pizen-lynx-mcp` also builds a binary, but it is an
+  **auxiliary, undeclared entrypoint**; `lx mcp` is the single canonical MCP
+  server (§7, §17).
+
+## 15. Versioning authority
+
+One authoritative version: `[workspace.package] version` in the root
+`Cargo.toml`. Nothing may drift from it:
+
+| Surface | Source |
+|---|---|
+| Cargo package versions | `version.workspace = true` in every crate |
+| Internal dependency requirements | `[workspace.dependencies]` `version` |
+| `lx --version` | `CARGO_PKG_VERSION` via clap |
+| MCP `serverInfo.version` | `env!("CARGO_PKG_VERSION")` |
+| Release tag / artifacts / checksums | tag `vX.Y.Z`; guarded by `release.yml` |
+| Scripts (`install.sh`, distribution tests) | read the workspace version |
+
+The release `version-guard` job fails any tag that does not equal the workspace
+version, so drift cannot be released.
+
+**Why 0.2.0.** The current source is a breaking rewrite of the previously
+published 0.1.4 (the library API changed wholesale, and the CLI/MCP surface was
+rebuilt). 0.1.4 already exists on crates.io and cannot be republished, and 0.x
+patch releases imply compatibility. Under semver, the honest next release of
+this source is **0.2.0**.
+
+## 16. crates.io channel (`cargo install pizen-lynx`)
+
+The supported installation channels converge on one product:
+
+| Channel | Command | Audience |
+|---|---|---|
+| Installer (fastest) | `curl -fsSL …/install.sh \| sh` | Everyone |
+| Rust-native | `cargo install pizen-lynx` | Rust developers |
+| Source | `git clone … && cargo build --release -p pizen-lynx` | Contributors |
+
+All three produce the same `lx` binary and the same `lx mcp` server. There are
+no channel-specific binaries.
+
+Publishing is **manual and ordered** (never automated until the boundary is
+confirmed and the ordered publish is verified):
+
+```bash
+for p in pizen-lynx-protocol pizen-lynx-parser pizen-lynx-embed \
+         pizen-lynx-storage pizen-lynx-core pizen-lynx-mcp pizen-lynx; do
+    cargo publish -p "$p"          # or: cargo publish --dry-run -p "$p" first
+done
+```
+
+A crate cannot be packaged/published until its internal dependencies already
+exist on the registry; this is a Cargo invariant, not a policy choice. The
+hermetic test in §18 exercises exactly this graph without requiring credentials.
+
+## 17. Packaging rules
+
+Every published package must be self-describing and self-contained:
+
+- **README and LICENSE are included.** Each crate has `README.md` and `LICENSE`
+  symlinks to the repository root, which Cargo dereferences into the archive.
+- **Metadata is complete.** `description`, `keywords`, `categories`,
+  `documentation`, `homepage`, `license`, and `repository` are set (shared fields
+  via `[workspace.package]`).
+- **Product description.** `pizen-lynx`'s description names the product and both
+  surfaces (`lx`, `lx mcp`); internal crates are marked "internal … not a public
+  API".
+- **No absolute paths, no local-only files, no dev-only dependency required at
+  install time.**
+- The `pizen-lynx-mcp` binary is not advertised as a product surface.
+
+## 18. CI and publish gate
+
+- **`cargo_install_test.sh`** (`tests/distribution/`) is the crates.io analogue
+  of the clean-machine test: it `cargo package`s every crate, assembles a local
+  **sparse** registry from the archives, and runs `cargo install --registry` with
+  a fresh `CARGO_HOME`, then runs `lx --version` and `lx doctor` from the
+  installed binary outside the checkout. It requires no publishing credentials.
+- The release workflow publishes **prebuilt archives** (`release.yml`) as the
+  primary channel. crates.io publication is a separate, gated, manual step; the
+  release job must not publish crates automatically.
+- The release gate ([`release-readiness.md`](release-readiness.md)) must include:
+  the ordered `cargo publish` for all seven crates, `cargo install pizen-lynx`
+  succeeding from a clean environment, and `lx --version` matching the tag.

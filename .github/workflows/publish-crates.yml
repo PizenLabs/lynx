@@ -1,0 +1,64 @@
+name: Publish crates.io
+
+# Manual-only publication of the Lynx crates. This workflow is deliberately NOT
+# triggered by tags or pushes: the public/private boundary must be confirmed and
+# the ordered publish run deliberately. `release.yml` publishes the prebuilt
+# archives; this workflow publishes the crates.
+#
+# Publishing must run in dependency order (a crate cannot be published until its
+# internal dependencies exist on the registry).
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Workspace version to publish (must equal [workspace.package] version)"
+        required: true
+        type: string
+      confirm:
+        description: 'Type "publish" to confirm a real crates.io upload'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  guard:
+    name: confirms version and intent
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - name: Check version and confirmation
+        run: |
+          set -euo pipefail
+          version="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1)"
+          echo "workspace-version=$version input-version=${{ inputs.version }}"
+          if [ "${{ inputs.version }}" != "$version" ]; then
+            echo "::error::input version does not match workspace version $version"
+            exit 1
+          fi
+          if [ "${{ inputs.confirm }}" != "publish" ]; then
+            echo "::error::confirmation missing (expected the word: publish)"
+            exit 1
+          fi
+
+  publish:
+    name: publish in dependency order
+    needs: [guard]
+    runs-on: ubuntu-24.04
+    environment: crates-io
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Publish
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          set -euo pipefail
+          for p in pizen-lynx-protocol pizen-lynx-parser pizen-lynx-embed \
+                   pizen-lynx-storage pizen-lynx-core pizen-lynx-mcp pizen-lynx; do
+            echo "== publishing $p =="
+            cargo publish -p "$p"
+          done
