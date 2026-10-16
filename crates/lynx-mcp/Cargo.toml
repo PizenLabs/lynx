@@ -5,8 +5,15 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+documentation = "https://docs.rs/pizen-lynx-mcp"
 
-description = "Model context protocol integration for Lynx."
+# Internal implementation crate (published only to satisfy Cargo; not a public API).
+# The canonical MCP entrypoint is `lx mcp`; the binary is an auxiliary,
+# undeclared entrypoint and is not part of the product surface.
+description = "Internal Model Context Protocol implementation for Lynx (canonical entrypoint: `lx mcp`)."
 
 [dependencies]
 anyhow = "1.0.102"

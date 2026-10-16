@@ -5,8 +5,13 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+documentation = "https://docs.rs/pizen-lynx-storage"
 
-description = "Storage layer for Lynx: SQLite graph substrate plus Tantivy lexical index."
+# Internal implementation crate (published only to satisfy Cargo; not a public API).
+description = "Internal storage layer for Lynx: SQLite graph/vector substrate plus a Tantivy lexical index."
 
 [dependencies]
 rusqlite = { version = "0.40.2", features = ["bundled"] }

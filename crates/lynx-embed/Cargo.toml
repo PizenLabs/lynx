@@ -5,8 +5,13 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+documentation = "https://docs.rs/pizen-lynx-embed"
 
-description = "Pure vector embedding provider for Lynx, backed by FastEmbed."
+# Internal implementation crate (published only to satisfy Cargo; not a public API).
+description = "Internal embedding provider for Lynx, backed by FastEmbed."
 
 [dependencies]
 fastembed = "7.1.1"

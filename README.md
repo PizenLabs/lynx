@@ -65,13 +65,29 @@ Lynx gives them one persistent, deterministic layer instead:
 
 ## Install
 
-One command, no Rust/Node/Python/Docker runtime required:
+Three supported channels — all install the same `lx` binary and the same
+`lx mcp` server.
+
+**1. Installer (fastest; no Rust/Node/Python/Docker runtime required):**
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/PizenLabs/lynx/main/install.sh | sh
 ```
 
-Then verify:
+**2. Rust-native (`cargo install`):**
+
+```bash
+cargo install pizen-lynx          # installs the `lx` binary
+```
+
+**3. Source (contributors):**
+
+```bash
+git clone https://github.com/PizenLabs/lynx
+cd lynx && cargo build --release -p pizen-lynx   # target/release/lx
+```
+
+Then verify whichever channel you used:
 
 ```bash
 lx --version
@@ -87,7 +103,7 @@ Inspect or control it without executing:
 ```bash
 sh install.sh --help                 # usage
 sh install.sh --download-only=/tmp   # download + verify only, install nothing
-LYNX_VERSION=v0.1.4 sh install.sh    # pin a release
+LYNX_VERSION=v0.2.0 sh install.sh    # pin a release
 sh install.sh --dir "$HOME/bin"      # choose the install directory
 sh install.sh --system               # explicit /usr/local/bin install (may need sudo)
 ```
@@ -96,6 +112,13 @@ Safety properties: HTTPS-only, checksum verified before unpacking, atomic
 replacement (a failed install leaves your existing `lx` untouched), no shell
 startup files modified, no telemetry, no background service. The installer is a
 single auditable file: [`install.sh`](./install.sh).
+
+> **crates.io note.** `pizen-lynx` is the product package. Its internal
+> implementation crates (`pizen-lynx-core`, `-storage`, `-parser`, `-embed`,
+> `-protocol`, `-mcp`) are published only because Cargo requires them for
+> `cargo install`; they are **not** a public API and carry no stability
+> guarantee. See
+> [`docs/architecture/distribution-design.md`](docs/architecture/distribution-design.md#13-public-surface-and-stability).
 
 > **First index note.** The embedding model is downloaded once into
 > `$HOME/.cache/lynx/fastembed` on the first `lx index`. Nothing else is
@@ -231,6 +254,9 @@ and [`docs/architecture/production-readiness.md`](docs/architecture/production-r
 
 ## Architecture
 
+The public product is one binary (`lx`) with two surfaces (`lx` and `lx mcp`).
+The implementation is a modular Cargo workspace:
+
 ```text
 crates/
   lynx-protocol/   frozen contracts every consumer depends on (no I/O)
@@ -239,13 +265,20 @@ crates/
   lynx-storage/    DualStorage: SQLite (identity/graph/vectors) + Tantivy (lexical)
   lynx-core/       Engine: discovery, indexing, retrieval, ranking, context
   lynx-mcp/        stdio JSON-RPC transport + session lifecycle
-  lynx-cli/        `lx` command-line transport
+  lynx-cli/        `lx` command-line transport (the product package)
 ```
 
 `lynx-core` owns the product logic; `lynx-storage` owns persistence; the
 transports contain none. Nothing repository-proportional is retained in memory:
 queries stream from storage under a bounded candidate budget. See
 [`docs/architecture/final-product-audit.md`](docs/architecture/final-product-audit.md).
+
+**Workspace boundaries are implementation boundaries, not public APIs.** Only
+`pizen-lynx` (the product) is a supported, versioned package. The other crates
+are published to crates.io only because Cargo requires registry-resolvable
+dependencies; they are internal and may change at any time. See
+[`docs/architecture/distribution-design.md`](docs/architecture/distribution-design.md)
+and [`docs/architecture/distribution-audit.md`](docs/architecture/distribution-audit.md).
 
 ---
 
@@ -275,6 +308,13 @@ Distribution tests (installer + clean-machine install → index → query → MC
 make dist-test
 # or
 tests/distribution/run.sh
+```
+
+Registry / crates.io packaging test (package every crate, install `pizen-lynx`
+from a locally assembled registry, run `lx`):
+
+```bash
+tests/distribution/cargo_install_test.sh
 ```
 
 Build a release binary directly:

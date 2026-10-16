@@ -408,20 +408,24 @@ fn doctor() -> Result<()> {
     // and freshness. `freshness()` re-scans only file hashes (never embeds).
     let db = storage.join("graph.sqlite3");
     let index_present = db.is_file();
-    let (symbols, freshness) = if index_present {
+    let (symbols, freshness, capability) = if index_present {
         match lynx_core::Engine::new(&storage, Box::new(UnavailableProvider)) {
             Ok(engine) => {
-                let count = engine.index_status().symbol_count;
+                let status = engine.index_status();
                 let fresh = engine
                     .freshness()
                     .map(|f| f.as_str().to_string())
                     .unwrap_or_else(|error| format!("error: {error}"));
-                (count, fresh)
+                (
+                    status.symbol_count,
+                    fresh,
+                    capability_name(status.capability_level).to_string(),
+                )
             }
-            Err(error) => (0, format!("error: {error}")),
+            Err(error) => (0, format!("error: {error}"), "unknown".to_string()),
         }
     } else {
-        (0, "missing".to_string())
+        (0, "missing".to_string(), "unknown".to_string())
     };
 
     let mcp_ok = smoke_check().is_ok();
@@ -439,7 +443,8 @@ fn doctor() -> Result<()> {
     println!("Platform     {platform}");
     println!("Install      {install}");
     println!("Workspace    {}", workspace.display());
-    println!("State        {}", verdict(state_ok));
+    println!("State path   {}", storage.display());
+    println!("Permissions  {}", verdict(state_ok));
     println!(
         "Repository   {}",
         if repository.is_some() {
@@ -451,6 +456,7 @@ fn doctor() -> Result<()> {
         }
     );
     println!("Index        {freshness} ({symbols} symbols)");
+    println!("Capability   {capability}");
     println!("MCP          {}", verdict(mcp_ok));
     println!();
     println!("Status       {}", if ready { "READY" } else { "NOT READY" });
