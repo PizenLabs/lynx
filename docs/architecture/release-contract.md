@@ -75,15 +75,20 @@ cross-compilation and no support claimed without a native build.
 | Target | Runner | Artifact | Policy |
 |---|---|---|---|
 | macOS arm64 | `macos-14` | `lynx-vX.Y.Z-darwin-arm64.tar.gz` | REQUIRED |
-| macOS x86_64 | `macos-15-intel` | `lynx-vX.Y.Z-darwin-x86_64.tar.gz` | REQUIRED |
 | Linux x86_64 | `ubuntu-24.04` | `lynx-vX.Y.Z-linux-x86_64.tar.gz` | REQUIRED |
 | Linux arm64 | `ubuntu-24.04-arm` | `lynx-vX.Y.Z-linux-arm64.tar.gz` | REQUIRED (CONDITIONAL runner availability) |
+| macOS x86_64 | — | — | **UNSUPPORTED** (no upstream ONNX Runtime build) |
 | Windows | — | — | **UNSUPPORTED** |
 
 A declared target that cannot be built **fails the release** (fail closed): if
 the `ubuntu-24.04-arm` runner is unavailable on the repository plan, the `build`
 job fails and no release is published. No incomplete artifact set is ever
 uploaded.
+
+macOS Intel (x86_64) is **not** a declared target: the embedding engine is
+backed by ONNX Runtime, and upstream ONNX Runtime publishes no x86_64 macOS
+build, so the binary cannot be compiled for it. `install.sh` rejects the
+platform explicitly rather than attempting a download that cannot exist.
 
 Each archive contains exactly one file — `lx`, at the archive root, mode `0755`
 — and the workflow verifies this before publishing. The `SHA256SUMS` manifest is

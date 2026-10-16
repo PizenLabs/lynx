@@ -28,9 +28,9 @@ clean: no PizenLabs runtime coupling, no telemetry, no daemon. Status: **PASS**
 | Target | Runner | Artifact | Status |
 |---|---|---|---|
 | macOS arm64 | `macos-14` | `lynx-vX.Y.Z-darwin-arm64.tar.gz` | **PASS** |
-| macOS x86_64 | `macos-15-intel` | `lynx-vX.Y.Z-darwin-x86_64.tar.gz` | **CONDITIONAL** |
 | Linux x86_64 | `ubuntu-24.04` | `lynx-vX.Y.Z-linux-x86_64.tar.gz` | **CONDITIONAL** |
 | Linux arm64 | `ubuntu-24.04-arm` | `lynx-vX.Y.Z-linux-arm64.tar.gz` | **CONDITIONAL** |
+| macOS x86_64 | — | — | **UNSUPPORTED** |
 | Windows | — | — | **UNSUPPORTED** |
 
 Each archive contains a single `lx` binary at the root; the release publishes
@@ -162,8 +162,10 @@ evaluated and **not** implemented. See
 
 ## 13. Known limitations
 
-1. Only macOS arm64 was executed on the development host; other prebuilt targets
-   are CI-native and CONDITIONAL (fail-closed release).
+1. Only macOS arm64 was executed on the development host; the other prebuilt
+   targets are CI-native and CONDITIONAL (fail-closed release). macOS Intel
+   (x86_64) is unsupported: upstream ONNX Runtime ships no x86_64 macOS build, so
+   the embedding engine cannot be compiled for it.
 2. crates.io publication of 0.2.0 is **maintainer-run** (credentials); the
    hermetic test proves the graph installs, but the real publish must be done in
    dependency order.
@@ -199,7 +201,7 @@ evaluated and **not** implemented. See
 Ship **v0.2.0**: tag `v0.2.0` (matching the workspace version), let
 `release.yml` build and publish the prebuilt archives, then run the ordered
 `cargo publish` for the seven crates. Before announcing, confirm every matrix
-job is green; if `ubuntu-24.04-arm` is unavailable, publish the three available
+job is green; if `ubuntu-24.04-arm` is unavailable, publish the two available
 targets and mark Linux arm64 CONDITIONAL rather than claiming it.
 
 The distribution layer meets the target: one product, one binary (`lx`), one

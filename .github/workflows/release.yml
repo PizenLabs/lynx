@@ -103,9 +103,6 @@ jobs:
           - runner: macos-14          # Apple Silicon (arm64)
             target: aarch64-apple-darwin
             platform: darwin-arm64
-          - runner: macos-15-intel    # Intel (x86_64)
-            target: x86_64-apple-darwin
-            platform: darwin-x86_64
           - runner: ubuntu-24.04      # x86_64
             target: x86_64-unknown-linux-gnu
             platform: linux-x86_64
@@ -116,6 +113,10 @@ jobs:
           - runner: ubuntu-24.04-arm  # arm64
             target: aarch64-unknown-linux-gnu
             platform: linux-arm64
+          # UNSUPPORTED: macOS Intel (x86_64). The embedding engine is backed by
+          # ONNX Runtime (via fastembed/ort), and upstream ONNX Runtime publishes
+          # no prebuilt x86_64 macOS binary, so the target cannot be built. No
+          # macOS Intel target is declared and no artifact is claimed.
           # UNSUPPORTED: Windows. No target is built and none is claimed.
     runs-on: ${{ matrix.runner }}
     steps:

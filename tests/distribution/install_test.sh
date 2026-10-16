@@ -185,6 +185,28 @@ UNSUPSTATUS=$?
 if [ "$UNSUPSTATUS" -ne 0 ]; then pass "unsupported platform exits non-zero"; else fail "unsupported platform did not fail"; fi
 case "$UNSUP" in *"unsupported"*) pass "unsupported platform message is explicit" ;; *) fail "unsupported message missing: $UNSUP" ;; esac
 
+# 7b. macOS Intel (x86_64) is rejected explicitly: the target was dropped
+#     because upstream ONNX Runtime ships no x86_64 macOS build.
+echo "[macOS Intel unsupported]"
+FAKEBIN_I="$WORK/fakebin-intel"; mkdir -p "$FAKEBIN_I"
+cat > "$FAKEBIN_I/uname" <<'EOF'
+#!/bin/sh
+case "$1" in
+  -s) echo "Darwin" ;;
+  -m) echo "x86_64" ;;
+  *) echo "Darwin" ;;
+esac
+EOF
+chmod +x "$FAKEBIN_I/uname"
+INTEL="$(PATH="$FAKEBIN_I:$PATH" LYNX_ALLOW_INSECURE=1 LYNX_BASE_URL="$BASE" sh "$INSTALLER" --dir "$WORK/bin-intel" --version v1.0.1 2>&1)"
+INTELSTATUS=$?
+if [ "$INTELSTATUS" -ne 0 ] && [ ! -e "$WORK/bin-intel/lx" ]; then
+    pass "macOS Intel fails closed with nothing installed"
+else
+    fail "macOS Intel did not fail closed (status=$INTELSTATUS)"
+fi
+case "$INTEL" in *"unsupported"*) pass "macOS Intel message is explicit" ;; *) fail "macOS Intel message missing: $INTEL" ;; esac
+
 # 8. no partial/temp files left behind
 echo "[atomic replacement]"
 if ls "$BIN"/.lx-install.* >/dev/null 2>&1; then
