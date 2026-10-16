@@ -15,7 +15,7 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
-use lynx_core::Engine;
+use lynx_core::{Engine, IndexUpdate};
 use lynx_embed::{FastEmbedProvider, VectorProvider};
 
 /// Directory (relative to the workspace root) holding the persistent index.
@@ -79,6 +79,7 @@ impl Session {
         if status.symbol_count == 0 {
             bail!("index at {} is empty; re-run `lx index`", storage.display());
         }
+        warn_if_stale(&engine);
         Ok(Self {
             engine,
             workspace_root: workspace_root.to_path_buf(),
@@ -86,11 +87,17 @@ impl Session {
         })
     }
 
-    /// Builds (or rebuilds) the persistent index for `workspace_root`.
-    pub fn build(workspace_root: &Path, include_tests: bool) -> Result<Self> {
+    /// Builds (or incrementally updates) the persistent index for
+    /// `workspace_root`, returning the applied change set.
+    pub fn update(workspace_root: &Path, include_tests: bool) -> Result<(Self, IndexUpdate)> {
         let provider = FastEmbedProvider::with_cache_dir(model_cache_dir()?)
             .context("initializing embedding model")?;
-        Self::build_with(workspace_root, include_tests, Box::new(provider))
+        Self::update_with(workspace_root, include_tests, Box::new(provider))
+    }
+
+    /// Builds (or rebuilds) the persistent index for `workspace_root`.
+    pub fn build(workspace_root: &Path, include_tests: bool) -> Result<Self> {
+        Ok(Self::update(workspace_root, include_tests)?.0)
     }
 
     /// [`Self::build`] with an injected provider.
@@ -102,17 +109,33 @@ impl Session {
         include_tests: bool,
         provider: Box<dyn VectorProvider>,
     ) -> Result<Self> {
+        Ok(Self::update_with(workspace_root, include_tests, provider)?.0)
+    }
+
+    /// [`Self::update`] with an injected provider, returning the applied
+    /// [`IndexUpdate`] so a caller can report what changed.
+    ///
+    /// This is the incremental path: on an existing index only added, modified,
+    /// and deleted files are touched.
+    pub fn update_with(
+        workspace_root: &Path,
+        include_tests: bool,
+        provider: Box<dyn VectorProvider>,
+    ) -> Result<(Self, IndexUpdate)> {
         let storage = storage_root(workspace_root);
         let engine = Engine::new(&storage, provider)
             .with_context(|| format!("opening index at {}", storage.display()))?;
-        engine
-            .index_repository(workspace_root, include_tests)
+        let update = engine
+            .update_repository(workspace_root, include_tests)
             .with_context(|| format!("indexing workspace {}", workspace_root.display()))?;
-        Ok(Self {
-            engine,
-            workspace_root: workspace_root.to_path_buf(),
-            storage_root: storage,
-        })
+        Ok((
+            Self {
+                engine,
+                workspace_root: workspace_root.to_path_buf(),
+                storage_root: storage,
+            },
+            update,
+        ))
     }
 
     /// Engine serving this session's queries.
@@ -147,6 +170,41 @@ fn storage_is_populated(workspace_root: &Path) -> Result<bool> {
     let engine = Engine::new(&storage, Box::new(lynx_embed::UnavailableProvider))
         .with_context(|| format!("opening index at {}", storage.display()))?;
     Ok(engine.index_status().symbol_count > 0)
+}
+
+/// Emits a stderr warning when the persisted index was built from a different
+/// git commit than the workspace's current HEAD.
+///
+/// This is a cheap git-only signal, safe for the query start-up path (no
+/// repository scan). The authoritative check is [`lynx_core::Engine::freshness`],
+/// exposed through `lx status` and the MCP `index_status` tool.
+fn warn_if_stale(engine: &Engine) {
+    let snapshot = engine.index_status().snapshot;
+    let Some(indexed) = snapshot.commit_hash.as_deref() else {
+        return;
+    };
+    let Some(head) = git_head(&snapshot.workspace_root) else {
+        return;
+    };
+    if indexed != head {
+        eprintln!(
+            "lynx: warning: index is stale (indexed commit {indexed}, workspace HEAD {head}); run `lx index` to refresh"
+        );
+    }
+}
+
+/// Resolves the current `HEAD` commit for `dir`, when it is a git work tree.
+fn git_head(dir: &Path) -> Option<String> {
+    let output = std::process::Command::new("git")
+        .args(["rev-parse", "HEAD"])
+        .current_dir(dir)
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let head = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    (!head.is_empty()).then_some(head)
 }
 
 /// Resolves the workspace root for the current working directory: the

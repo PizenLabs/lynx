@@ -38,7 +38,7 @@ use crate::error::CoreError;
 use crate::query::{next_query_id, QueryOptions, QueryReport, QueryState};
 use crate::retrieval::{
     apply_definition_boost, apply_noise_penalty, classify_path, classify_query, cosine_similarity,
-    finalize_fused, rank_contributions, rrf_fuse, PathNoise, QueryClass, TopK,
+    finalize_fused, rank_contributions, rrf_fuse, PathNoise, TopK,
 };
 
 /// Maximum number of source lines captured as a per-symbol snippet.
@@ -74,6 +74,95 @@ const CANDIDATE_HARD_MAX: usize = 100_000;
 
 /// Metadata key holding the highest capability level of the indexed workspace.
 const CAPABILITY_META: &str = "capability";
+
+/// Metadata key recording whether the index was built with test/mock files
+/// included, so freshness compares like with like.
+const INCLUDE_TESTS_META: &str = "include_tests";
+
+/// Largest source file (bytes) that will be read and indexed.
+///
+/// A resource guard, not a correctness rule: an adversarial or generated file
+/// far larger than any real source unit cannot be allowed to spike indexing
+/// memory. Files above the bound are skipped, leaving the process stable.
+const MAX_INDEX_FILE_BYTES: u64 = 8 * 1024 * 1024;
+
+/// Freshness of a persisted index relative to its workspace.
+///
+/// Every state is a distinct, actionable outcome; no state means "probably
+/// fine". [`Freshness::Fresh`] is only returned after the workspace has been
+/// re-scanned and found identical to the persisted file states.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Freshness {
+    /// The persisted file states match the workspace exactly.
+    Fresh,
+    /// The workspace has added, modified, or deleted files since indexing.
+    Stale,
+    /// No populated index exists at the storage root.
+    Missing,
+    /// The index was written by an incompatible schema version and was reset.
+    Incompatible,
+    /// The substrate failed its integrity check and must be rebuilt.
+    Corrupt,
+    /// The recorded workspace root is absent, so freshness cannot be checked.
+    Unknown,
+}
+
+impl Freshness {
+    /// Stable lowercase wire name.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Freshness::Fresh => "fresh",
+            Freshness::Stale => "stale",
+            Freshness::Missing => "missing",
+            Freshness::Incompatible => "incompatible",
+            Freshness::Corrupt => "corrupt",
+            Freshness::Unknown => "unknown",
+        }
+    }
+}
+
+/// A workspace-relative file and the content hash of its bytes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FileState {
+    /// Workspace-relative path, `/`-separated.
+    pub path: String,
+    /// Hex `blake3` digest of the file's bytes.
+    pub content_hash: String,
+}
+
+/// The change set between a workspace and a persisted index.
+#[derive(Debug, Clone, Default)]
+pub struct UpdatePlan {
+    /// Files present now and absent from the index.
+    pub added: Vec<String>,
+    /// Files whose content hash changed.
+    pub modified: Vec<String>,
+    /// Files present in the index and absent from the workspace.
+    pub deleted: Vec<String>,
+    /// Files whose content hash is unchanged.
+    pub unchanged: usize,
+}
+
+impl UpdatePlan {
+    /// Whether the plan would change nothing.
+    pub fn is_empty(&self) -> bool {
+        self.added.is_empty() && self.modified.is_empty() && self.deleted.is_empty()
+    }
+
+    /// Total files the plan would write or remove.
+    pub fn changed(&self) -> usize {
+        self.added.len() + self.modified.len() + self.deleted.len()
+    }
+}
+
+/// The result of an incremental indexing pass.
+#[derive(Debug, Clone)]
+pub struct IndexUpdate {
+    /// The applied change set.
+    pub plan: UpdatePlan,
+    /// The index state after the pass.
+    pub status: IndexStatus,
+}
 
 /// Resolves the bounded per-channel candidate count for a requested `limit`.
 fn candidate_limit(limit: usize) -> usize {
@@ -213,106 +302,98 @@ impl Engine {
         Ok(self.dual.graph().has_symbols()?)
     }
 
-    /// Indexes every supported source file under `repo_path`.
+    /// Indexes `repo_path`, updating only the files that changed since the last
+    /// pass.
     ///
-    /// Pipeline per file: git provenance -> [`Parser::parse`] ->
-    /// [`DualStorage`] (symbols, relations, vectors) -> Tantivy documents. State
-    /// is cleared first, so a rebuild never retains stale rows. Memory is
-    /// `O(largest file + embedding batch)`: nothing repository-proportional is
-    /// held in RAM.
+    /// The first call on an empty substrate behaves as a full build; every
+    /// subsequent call diffs the workspace's per-file content hashes against
+    /// the persisted [`crate::FileState`]s and re-parses/re-embeds only added
+    /// and modified files, removing the rows and documents of deleted or
+    /// replaced files first. State is therefore never left stale, and a small
+    /// edit costs a small pass.
+    ///
+    /// Memory remains `O(largest file + embedding batch)`: the diff holds only
+    /// path/hash pairs, never file bodies.
     pub fn index_repository(
         &self,
         repo_path: &Path,
         include_tests: bool,
     ) -> Result<IndexStatus, CoreError> {
-        let snapshot = resolve_snapshot(repo_path)?;
+        Ok(self.update_repository(repo_path, include_tests)?.status)
+    }
+
+    /// Discards the entire index and rebuilds it from `repo_path`.
+    ///
+    /// This is the explicit recovery path: use it after a corruption or an
+    /// incompatible-schema reset, or when a consumer wants a guaranteed-clean
+    /// artifact regardless of what was indexed before.
+    pub fn rebuild_repository(
+        &self,
+        repo_path: &Path,
+        include_tests: bool,
+    ) -> Result<IndexStatus, CoreError> {
         self.dual.reset()?;
+        self.index_repository(repo_path, include_tests)
+    }
+
+    /// [`Engine::index_repository`] returning the applied [`IndexUpdate`]: the
+    /// diff that was computed and the resulting status.
+    pub fn update_repository(
+        &self,
+        repo_path: &Path,
+        include_tests: bool,
+    ) -> Result<IndexUpdate, CoreError> {
+        let snapshot = resolve_snapshot(repo_path)?;
         self.dual.graph().save_snapshot(&snapshot)?;
 
-        let mut files: Vec<String> = Vec::new();
-        let mut max_capability = CapabilityLevel::L0Text;
+        let current = scan_workspace(repo_path, include_tests)?;
+        let plan = self.diff_plan(&current)?;
 
-        for entry in WalkDir::new(repo_path).into_iter().filter_map(Result::ok) {
-            if !entry.file_type().is_file() {
-                continue;
-            }
-            let path = entry.path();
-            let relative = path.strip_prefix(repo_path).unwrap_or(path);
-            if should_skip(relative, include_tests) {
-                continue;
-            }
-            let source = match std::fs::read_to_string(path) {
-                Ok(source) => source,
-                Err(_) => continue, // binary or unreadable
-            };
-            let (parsed_symbols, parsed_relations) = match self.parser.parse(relative, &source) {
-                Ok(pair) => pair,
-                Err(_) => continue, // unparseable file
-            };
-            files.push(relative.to_string_lossy().to_string());
-            let capability = adapter_capability(relative);
-            if capability_rank(capability) > capability_rank(max_capability) {
-                max_capability = capability;
-            }
-
-            let snippets = compute_file_snippets(&source, &parsed_symbols);
-            let file_identities: Vec<(SymbolIdentity, SourceRange, String)> = parsed_symbols
-                .iter()
-                .cloned()
-                .zip(snippets)
-                .map(|(identity, (range, snippet))| (identity, range, snippet))
-                .collect();
-            let entries: Vec<(SymbolIdentity, SourceRange)> = file_identities
-                .iter()
-                .map(|(identity, range, _)| (identity.clone(), range.clone()))
-                .collect();
-            // Symbols must land before their intra-file relations (FKs enforced);
-            // all three writes are per-file transactions, so indexing is a
-            // streaming pass rather than an accumulating one.
-            self.dual
-                .graph()
-                .insert_symbols(&entries, &snapshot.content_hash)?;
-            self.dual
-                .graph()
-                .insert_relations(&parsed_relations, &snapshot.content_hash)?;
-
-            let docs: Vec<lynx_storage::LexicalDoc> = file_identities
-                .iter()
-                .map(|(identity, _, snippet)| lynx_storage::LexicalDoc {
-                    symbol_hash: identity.content_hash.clone(),
-                    code_snippet: snippet.clone(),
-                    language: wire_language(identity.language).to_string(),
-                    file_path: identity.file_path.to_string_lossy().to_string(),
-                })
-                .collect();
-            self.dual.lexical().add_documents(&docs)?;
-
-            // Embed a compact, bounded descriptor per symbol rather than the raw
-            // excerpt: it keeps the whole batch short (fastembed pads to the
-            // longest member) and adds high-signal identity tokens (fqdn, kind).
-            let texts: Vec<String> = file_identities
-                .iter()
-                .map(|(identity, _, snippet)| embedding_text(identity, snippet))
-                .collect();
-            let text_refs: Vec<&str> = texts.iter().map(String::as_str).collect();
-            let vectors = self.provider.embed_batch(&text_refs)?;
-            let embedding_items: Vec<(String, Vec<f32>)> = file_identities
-                .iter()
-                .map(|(identity, _, _)| identity.content_hash.clone())
-                .zip(vectors)
-                .collect();
-            self.dual.graph().put_embeddings(&embedding_items)?;
+        // Delete first (in opstamp order), so a re-added file replaces its old
+        // documents rather than duplicating them.
+        let mut remove: Vec<String> = plan.deleted.clone();
+        remove.extend(plan.modified.iter().cloned());
+        if !remove.is_empty() {
+            self.dual.graph().delete_files(&remove)?;
+            self.dual.lexical().delete_by_file_paths(&remove)?;
         }
+
+        let mut changed: Vec<&(String, String)> = current
+            .iter()
+            .filter(|(path, _)| plan.added.contains(path) || plan.modified.contains(path))
+            .collect();
+        changed.sort_by(|a, b| a.0.cmp(&b.0));
+        for (path, _) in changed {
+            let source = match std::fs::read_to_string(repo_path.join(path)) {
+                Ok(source) => source,
+                Err(_) => continue, // vanished or became unreadable mid-pass
+            };
+            self.index_file(Path::new(path), &source, &snapshot)?;
+        }
+
+        let max_capability = current
+            .iter()
+            .map(|(path, _)| adapter_capability(Path::new(path)))
+            .max_by_key(|level| capability_rank(*level))
+            .unwrap_or(CapabilityLevel::L0Text);
 
         self.dual
             .graph()
-            .insert_files(&files, &snapshot.content_hash)?;
+            .upsert_files(&current, &snapshot.content_hash)?;
         // Flush the shared lexical writer once, at the end of the pass, so the
         // on-disk index is quiescent before the session is persisted or served.
         self.dual.lexical().commit()?;
+        self.dual.graph().set_meta(
+            lynx_storage::graph_store::LATEST_SNAPSHOT_META,
+            &snapshot.content_hash,
+        )?;
         self.dual
             .graph()
             .set_meta(CAPABILITY_META, capability_name(max_capability))?;
+        self.dual.graph().set_meta(
+            INCLUDE_TESTS_META,
+            if include_tests { "true" } else { "false" },
+        )?;
 
         let (files, symbols, relations) = self.dual.graph().counts()?;
         *self.snapshot.lock().unwrap() = snapshot.clone();
@@ -324,7 +405,151 @@ impl Engine {
             capability_level: max_capability,
         };
         *self.status.lock().unwrap() = status.clone();
-        Ok(status)
+        Ok(IndexUpdate { plan, status })
+    }
+
+    /// Parses, stores, and indexes one file's symbols, relations, snippets, and
+    /// vectors. The file's previous rows must already have been removed.
+    fn index_file(
+        &self,
+        relative: &Path,
+        source: &str,
+        snapshot: &Snapshot,
+    ) -> Result<(), CoreError> {
+        let (parsed_symbols, parsed_relations) = match self.parser.parse(relative, source) {
+            Ok(pair) => pair,
+            Err(_) => return Ok(()), // unparseable file: skip, never fatal
+        };
+
+        let snippets = compute_file_snippets(source, &parsed_symbols);
+        let file_identities: Vec<(SymbolIdentity, SourceRange, String)> = parsed_symbols
+            .iter()
+            .cloned()
+            .zip(snippets)
+            .map(|(identity, (range, snippet))| (identity, range, snippet))
+            .collect();
+        let entries: Vec<(SymbolIdentity, SourceRange)> = file_identities
+            .iter()
+            .map(|(identity, range, _)| (identity.clone(), range.clone()))
+            .collect();
+        // Symbols must land before their intra-file relations (FKs enforced);
+        // all three writes are per-file transactions, so indexing is a
+        // streaming pass rather than an accumulating one.
+        self.dual
+            .graph()
+            .insert_symbols(&entries, &snapshot.content_hash)?;
+        self.dual
+            .graph()
+            .insert_relations(&parsed_relations, &snapshot.content_hash)?;
+
+        let docs: Vec<lynx_storage::LexicalDoc> = file_identities
+            .iter()
+            .map(|(identity, _, snippet)| lynx_storage::LexicalDoc {
+                symbol_hash: identity.content_hash.clone(),
+                code_snippet: snippet.clone(),
+                language: wire_language(identity.language).to_string(),
+                file_path: identity.file_path.to_string_lossy().to_string(),
+            })
+            .collect();
+        self.dual.lexical().add_documents(&docs)?;
+
+        // Embed a compact, bounded descriptor per symbol rather than the raw
+        // excerpt: it keeps the whole batch short (fastembed pads to the
+        // longest member) and adds high-signal identity tokens (fqdn, kind).
+        let texts: Vec<String> = file_identities
+            .iter()
+            .map(|(identity, _, snippet)| embedding_text(identity, snippet))
+            .collect();
+        let text_refs: Vec<&str> = texts.iter().map(String::as_str).collect();
+        let vectors = self.provider.embed_batch(&text_refs)?;
+        let embedding_items: Vec<(String, Vec<f32>)> = file_identities
+            .iter()
+            .map(|(identity, _, _)| identity.content_hash.clone())
+            .zip(vectors)
+            .collect();
+        self.dual.graph().put_embeddings(&embedding_items)?;
+        Ok(())
+    }
+
+    /// Diffs a freshly scanned workspace against the persisted file states.
+    fn diff_plan(&self, current: &[(String, String)]) -> Result<UpdatePlan, CoreError> {
+        let stored: HashMap<String, String> =
+            self.dual.graph().file_states()?.into_iter().collect();
+        let mut plan = UpdatePlan::default();
+        let mut present: HashSet<&str> = HashSet::with_capacity(current.len());
+        for (path, hash) in current {
+            present.insert(path.as_str());
+            match stored.get(path) {
+                None => plan.added.push(path.clone()),
+                Some(previous) if previous != hash => plan.modified.push(path.clone()),
+                Some(_) => plan.unchanged += 1,
+            }
+        }
+        for path in stored.keys() {
+            if !present.contains(path.as_str()) {
+                plan.deleted.push(path.clone());
+            }
+        }
+        plan.added.sort();
+        plan.modified.sort();
+        plan.deleted.sort();
+        Ok(plan)
+    }
+
+    /// Computes the change set between the persisted index and `repo_path`
+    /// without applying it. The basis of [`Engine::freshness`].
+    pub fn plan_update(
+        &self,
+        repo_path: &Path,
+        include_tests: bool,
+    ) -> Result<UpdatePlan, CoreError> {
+        let current = scan_workspace(repo_path, include_tests)?;
+        self.diff_plan(&current)
+    }
+
+    /// Classifies the persisted index against its workspace.
+    ///
+    /// Unlike [`Engine::index_status`], this reads the repository (hashing
+    /// every file) and runs a SQLite integrity check, so it is an explicit,
+    /// on-demand operation rather than something paid on the query path.
+    ///
+    /// The persisted index records whether it was built with tests included;
+    /// freshness compares against the same policy so a mismatch in that policy
+    /// surfaces as [`Freshness::Stale`].
+    pub fn freshness(&self) -> Result<Freshness, CoreError> {
+        if !self.populated()? {
+            // An empty substrate that was reset on open means the caller must
+            // re-index; an empty substrate that was never indexed is simply
+            // missing. A populated substrate is valid regardless of a past
+            // reset, so a re-index clears the incompatibility.
+            return Ok(if self.dual.graph().schema_reset() {
+                Freshness::Incompatible
+            } else {
+                Freshness::Missing
+            });
+        }
+        if !self.dual.graph().quick_check()? {
+            return Ok(Freshness::Corrupt);
+        }
+        let Some(snapshot) = self.dual.graph().latest_snapshot()? else {
+            return Ok(Freshness::Missing);
+        };
+        let root = snapshot.workspace_root.clone();
+        if root.as_os_str().is_empty() || !root.is_dir() {
+            return Ok(Freshness::Unknown);
+        }
+        let include_tests = self
+            .dual
+            .graph()
+            .get_meta(INCLUDE_TESTS_META)?
+            .map(|value| value == "true")
+            .unwrap_or(false);
+        let plan = self.plan_update(&root, include_tests)?;
+        Ok(if plan.is_empty() {
+            Freshness::Fresh
+        } else {
+            Freshness::Stale
+        })
     }
 
     /// Reports the current index state.
@@ -372,9 +597,12 @@ impl Engine {
             return Err(terminal_error(state));
         }
 
-        // Deterministic exact resolution for bare symbol queries: this must not
-        // be a ranking problem. A miss degrades gracefully to hybrid retrieval.
-        let exact = if classify_query(query) == QueryClass::Symbol {
+        // Deterministic exact resolution for symbol/qualified queries: this
+        // must not be a ranking problem. A miss degrades gracefully to hybrid
+        // retrieval, so an unresolvable identifier still gets results.
+        let class = classify_query(query);
+        report.class(class);
+        let exact = if class.is_deterministic() {
             self.resolve(query).ok().flatten()
         } else {
             None
@@ -919,6 +1147,48 @@ fn tree_hash(repo_path: &Path) -> String {
         }
     }
     hasher.finalize().to_hex().to_string()
+}
+
+/// Walks `repo_path`, returning `(relative_path, content_hash)` for every
+/// indexable file, sorted by path.
+///
+/// "Indexable" mirrors the indexing predicate: not excluded by
+/// [`should_skip`], valid UTF-8 (a binary file cannot be parsed to text), and
+/// within [`MAX_INDEX_FILE_BYTES`]. Only path/hash pairs are retained, so the
+/// scan is `O(files)` in metadata, never repository bytes.
+fn scan_workspace(
+    repo_path: &Path,
+    include_tests: bool,
+) -> Result<Vec<(String, String)>, CoreError> {
+    let mut out: Vec<(String, String)> = Vec::new();
+    for entry in WalkDir::new(repo_path).into_iter().filter_map(Result::ok) {
+        if !entry.file_type().is_file() {
+            continue;
+        }
+        let path = entry.path();
+        let relative = path.strip_prefix(repo_path).unwrap_or(path);
+        if should_skip(relative, include_tests) {
+            continue;
+        }
+        if entry.metadata().map(|meta| meta.len()).unwrap_or(0) > MAX_INDEX_FILE_BYTES {
+            continue;
+        }
+        let Ok(bytes) = std::fs::read(path) else {
+            continue;
+        };
+        if std::str::from_utf8(&bytes).is_err() {
+            continue; // binary: not a source file
+        }
+        out.push((relative.to_string_lossy().to_string(), hash_bytes(&bytes)));
+    }
+    out.sort_by(|a, b| a.0.cmp(&b.0));
+    Ok(out)
+}
+
+/// Hex `blake3` digest of raw bytes: the per-file content identity used by the
+/// incremental diff.
+fn hash_bytes(bytes: &[u8]) -> String {
+    blake3::hash(bytes).to_hex().to_string()
 }
 
 /// Whether a workspace-relative path should be excluded from indexing.

@@ -10,7 +10,6 @@ repository = "https://github.com/PizenLabs/lynx"
 homepage = "https://github.com/PizenLabs/lynx"
 
 [workspace.dependencies]
-lynx-common = { package = "pizen-lynx-common", path = "crates/lynx-common", version = "0.1.1" }
 lynx-core = { package = "pizen-lynx-core", path = "crates/lynx-core", version = "0.1.1" }
 lynx-embed = { package = "pizen-lynx-embed", path = "crates/lynx-embed", version = "0.1.1" }
 lynx-mcp = { package = "pizen-lynx-mcp", path = "crates/lynx-mcp", version = "0.1.1" }

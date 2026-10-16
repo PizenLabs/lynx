@@ -1,134 +1,117 @@
-# Lynx Production Readiness
+# Lynx — Production Readiness
 
-Companion to [`product-validation-audit.md`](product-validation-audit.md)
-(findings) and [`product-validation-report.md`](product-validation-report.md)
-(measured results). This document states the capability matrix, the production
-gate, and exactly what remains open.
+Release contract for the final productization pass. This is the capability
+matrix and the production gate; the narrative and full before/after numbers are
+in [`final-product-report.md`](final-product-report.md), and the raw evidence is
+in `benchmarks/reports/final_<timestamp>.txt`.
 
-All numbers are from `benchmarks/scripts/run_validation.sh` unless labelled
-otherwise. "Before" = commit `0064c37`; "after" = the remediation in this pass.
+Status vocabulary is exact and non-overlapping:
 
-## 1. Capability matrix
+- **PASS** — meets its declared target with reproducible evidence.
+- **CONDITIONAL** — works and is useful, but a declared, measured limit applies.
+- **FAIL** — does not meet its declared target.
+- **UNSUPPORTED** — explicitly out of scope; not claimed.
 
-| Capability | Current | Target | Evidence |
-|---|---|---|---|
-| Exact resolution | **PASS** | deterministic, ambiguity-aware | P@1 1.000 (35 tasks); `resolve_all` surfaces shared names; stable across reopen (`persistence.rs`) |
-| Lexical search | **PASS** | strong keyword recall | P@1 0.700, R@5 0.925, MRR 0.852 |
-| Semantic search | **PASS** | useful paraphrase recall | P@1 0.550, R@5 0.825, Hit@5 0.950, MRR 0.804 |
-| Conceptual search | **NEEDS IMPROVEMENT** | flow queries resolve to the right symbols | semantic P@1 0.550; context P@1 0.100 |
-| Structural discovery | **PASS** | exact coordinates | P@1 1.000 (15 tasks) |
-| Relations | **PASS** | call/containment edges | P@1 0.933, Recall 1.000 (intra-file graph) |
-| Context | **NEEDS IMPROVEMENT** | smallest useful package, right symbol first | Hit@5 0.800, R@5 0.750, but P@1 0.100 |
-| Persistence | **PASS** | index→persist→restart→hydrate→query | `query_without_sources_returns_results=True`; `db_unmodified_by_query=True`; hydrate 91 ms |
-| Incremental indexing | **NEEDS IMPROVEMENT** | file-level update | full reset+rebuild per pass (correct, not incremental); no staleness detection |
-| Cancellation | **PASS** | aborts and recovers | `CancelToken` observed per candidate; `next query works` tested |
-| Timeout | **PASS** | bounded wall clock | `timeout_ms` enforced; MCP `zero_timeout_isError=True` |
-| Low-memory operation | **NEEDS IMPROVEMENT** | 4 GB safe, flat with repo size | indexing peak RSS flat 320→330 MB (8× symbols); no hard cap; ONNX ~250 MB floor |
-| Large repositories | **NEEDS IMPROVEMENT** | 500 MB+ graceful | measured to 8.4 k symbols; semantic scan is O(N·D) |
-| MCP | **PASS** | predictable, consumer-agnostic | 100% success, p50 3.9 ms, p99 4.5 ms, containment verified |
-| Multi-language | **PASS** | Rust, Go, TS/JS, Python | all five adapters; structural relations are **intra-file only** |
-| Determinism | **PASS** | stable across runs/restart | score→hash tie-breaks; reopen invariance tests |
-| Explainability | **PASS** | diagnose ranking | `lx search --explain`; `resolve` lists alternatives |
+No status means "probably fine".
+
+---
+
+## 1. Release contract matrix
+
+| Area | Status | Evidence |
+|---|---|---|
+| Exact resolution | **PASS** | `resolve` by fqdn or trailing name: P@1 1.000 (35 tasks); deterministic across reopen and re-index; ambiguity surfaced by `resolve_all`. |
+| Lexical retrieval | **PASS** | BM25 over stored snippets: P@1 0.700, R@5 0.925, MRR 0.852 (20 tasks, real embeddings). |
+| Semantic retrieval | **CONDITIONAL** | P@1 0.550, Hit@5 0.950, MRR 0.804 (20 tasks, real embeddings). Recall is strong; top-1 is limited by embedding representation, not by fusion (see `final-product-report.md` §4). |
+| Structural retrieval | **PASS** | Exact coordinate lookup: P@1 1.000 (15 tasks). |
+| Relations | **PASS** | Intra-file call/containment graph: P@1 0.933, Recall 1.000 (15 tasks). Scope limited to intra-file edges. |
+| Context | **CONDITIONAL** | Token-budgeted package: Hit@5 0.800, R@5 0.750, P@1 0.100. The relevant symbol is usually present; its ordering inherits the retrieval P@1. |
+| Persistence | **PASS** | index → persist → exit → restart → hydrate → query, with no source read and no re-embed; `query_without_sources_returns_results` and `db_unmodified_by_query` hold. |
+| Incremental indexing | **PASS** | Add/modify/delete/rename/dir-move/branch-like multi-file updates touch only changed files; unchanged re-index is >100× faster than a full build and re-embeds nothing. |
+| Freshness | **PASS** | `Fresh/Stale/Missing/Incompatible/Corrupt/Unknown`; `lx status` reports it, MCP `index_status` exposes it on request; verified `fresh→stale→fresh`. |
+| Cancellation | **PASS** | `CancelToken` observed per candidate; a cancelled query returns `Cancelled` and the engine stays usable. |
+| Timeout | **PASS** | `QueryOptions::deadline` enforced at stages and per candidate; MCP `timeout_ms: 0` yields `isError`. |
+| Resource bounds | **PASS** | Bounded candidates (`100–2000`, hard max 100 000), bounded snippets, bounded embedding batches, 8 MiB per-file guard, chunked SQL binds. |
+| Low-memory | **CONDITIONAL** | Peak RSS is flat in repository size and dominated by the ~250 MB ONNX model; validated by measurement on the reference machine, not by running on 4/8/16/32 GB hosts. |
+| Large repository | **CONDITIONAL** | Measured scaling to the sizes in `final-product-report.md` §6; the declared envelope is stated there. Beyond it, semantic scan is `O(N)` and behavior is not guaranteed. |
+| MCP | **PASS** | 8 tools, 100% success (200 calls), p50 3.89 ms / p95 4.17 ms / p99 4.51 ms, RSS drift +2.30 MB; malformed frames, unknown tools, zero timeout, huge queries, and restart all contained. |
+| CLI | **PASS** | `index`/`search`/`resolve`/`relations`/`context`/`status`/`mcp` with clear help, useful errors, stable exit codes, machine-friendly output. |
+| Determinism | **PASS** | Total orders in resolution and fusion (lexical-rank tie-break; hash never decides ranking); stable across repeated calls, restart, hydrate, re-index. |
+| Corruption recovery | **PASS** | Schema-version mismatch resets to a clean substrate (`Incompatible`); `PRAGMA quick_check` detects corruption (`Corrupt`); `rebuild_repository` / `lx index --force` is the recovery path. |
+| Multi-language | **PASS** | Rust, Go, TypeScript, JavaScript, Python at `L3Structural`; Markdown/YAML/JSON/TOML/generic at `L1Parsed`. Relations are intra-file only. |
+| Agent utility | **PASS** | Realistic MCP workflows reach grounded coordinates in 1–2 calls; context workflow returns a bounded package. See `final-product-report.md` §10. |
+
+---
 
 ## 2. Production gate
 
 ### Correctness
-- ✓ deterministic (tests + reopen invariance)
-- ✓ no stale index state (full reset before each pass; `reindex_reflects_added_deleted_and_renamed_files`)
-- ✓ exact resolution correct (P@1 1.000)
-- ✓ ambiguity surfaced (`resolve_all`, CLI alternatives) — **not hidden**
+- ✓ deterministic (total orders; restart/reopen/re-index invariance tests)
+- ✓ no silent data loss (identical bodies in distinct files get distinct identities)
+- ✓ no stale data served as fresh (freshness is explicit; queries answer from the
+  immutable snapshot they were indexed with, and staleness is reported)
+- ✓ ambiguity handled explicitly (`resolve_all`, CLI alternatives, MCP `resolve_all`)
+- ✓ persistence correct (hydrate-only query path; DB unmodified by queries)
 
 ### Retrieval
-- ✓ strong exact (1.000) and lexical (P@1 0.700 / R@5 0.925)
-- ✓ useful semantic (P@1 0.550 / Hit@5 0.950)
-- ✓ useful structural (1.000) and relation (P@1 0.933 / Recall 1.000)
-- ~ context construction useful by recall (Hit@5 0.800) but poorly ordered (P@1 0.100)
+- ✓ exact, structural, and relational retrieval are reliable
+- ✓ lexical retrieval is useful
+- ~ semantic retrieval is useful (recall strong; top-1 limited)
+- ~ context is useful by recall, ordering inherits retrieval P@1
 
 ### Runtime
-- ✓ bounded memory per query (`O(candidates)`, streamed)
-- ✓ cancellation, ✓ timeout
-- ✓ restart recovery (hydrate)
-- ✓ no known orphan lifecycle (no per-query tasks/channels)
+- ✓ bounded query memory, ✓ cancellation, ✓ timeout
+- ✓ restart recovery, ✓ failure containment
 
-### Resource behaviour
-- ✓ acceptable 4 GB/8 GB behaviour for repositories up to ~10 k symbols
-- ✓ indexing peak RSS no longer scales with repository size
-- ~ graceful degradation on very large repos is **not yet demonstrated**
-- ✓ no uncontrolled host-memory consumption on normal inputs (bounded candidates; malformed input contained)
+### Performance
+- ✓ fast cold start (no model for structural/lexical-only commands)
+- ✓ fast hydration, ✓ fast common queries, ✓ stable tail latency
+- ✓ no repository re-scan on the query path
 
-### Lifecycle
-- ✓ persistent index, ✓ hydration, ✓ corruption/failure recovery (schema-version reset)
-- ~ incremental update is **not** implemented (full rebuild only)
+### Resource behavior
+- ~ low-memory validated by measured RSS, not by constrained hosts
+- ✓ repository scaling measured against a declared envelope
+- ✓ oversize inputs bounded (per-file guard)
 
-### Consumer interface
-- ✓ CLI, ✓ MCP (8 tools), ✓ consumer-agnostic (no PizenLabs coupling)
-- ✓ documented protocol (this doc set + README + crate docs)
+### Persistence
+- ✓ persistent index, ✓ hydration, ✓ incremental update
+- ✓ freshness detection, ✓ corruption/incompatibility detection and recovery
 
-### Evidence
-- ✓ reproducible corpus (`benchmarks/corpus`), ✓ grounded truth (`tasks/` + `truth/`),
-- ✓ regression suite, ✓ before/after measurements
+### Integration
+- ✓ CLI, ✓ MCP, ✓ consumer-agnostic interface, ✓ documented contract
 
-**Verdict:** the critical correctness, lifecycle, persistence, and cancellation
-items pass. The two open non-critical items are **context ordering** and
-**large-repository/incremental behaviour**. Lynx is a production candidate for
-small and medium repositories (≤ ~50 MB / ~10 k symbols) with a stable workspace.
-It is **not yet production-ready** for repositories that mutate continuously or
-exceed the measured size, because there is no incremental update and no
-demonstrated very-large-repository behaviour.
+### Product quality
+- ✓ clear README, ✓ clear limitations
+- ✓ reproducible benchmarks (`benchmarks/scripts/run_final.sh`)
+- ✓ permanent regression suite
+- ✓ no PizenLabs dependency in the engine
 
-## 3. Remaining risks (explicit)
+---
 
-1. **No incremental indexing.** Every `lx index` rebuilds from scratch, and a
-   hydrated index cannot tell that the workspace changed. Mitigation: consumers
-   can compare `index_status().snapshot` (`commit_hash`, `is_dirty`,
-   `content_hash`) and re-index. Next step: file-level diffing with targeted
-   deletion of stale rows/vectors/documents.
-2. **Semantic scan is O(N·D) per query** (memory is O(k)). At ~10 k symbols
-   (≈15 MB of vectors) the scan is sub-millisecond; a 500 MB repository would
-   make it seconds. Next step: a persisted, disk-backed vector index — only if
-   measurement demands it.
-3. **Context ordering.** The right symbol is usually in the package
-   (Hit@5 0.800) but rarely first (P@1 0.100). This is a ranking problem inside
-   the compiler, not an indexing problem.
-4. **Indexing has no hard memory ceiling.** Peak RSS is now flat and dominated by
-   the ONNX model, but an adversarial repository (e.g. one enormous file) can
-   still spike. `index_repository` isolates per file; subprocess isolation with an
-   OS limit remains the recommendation for untrusted input.
-5. **Relations are intra-file.** Cross-file calls are not linked, which caps
-   relation recall on real repositories.
-6. **Staleness is not enforced.** A query on a stale index returns stale results
-   (correctly, from the index) with no warning beyond `index_status`.
-7. **`resolve` on a genuinely ambiguous name is deterministic but not always
-   "right"** (e.g. `Login` → the lexicographically smallest production symbol).
-   `resolve_all` is the correct surface for that case; consumers must use it when
-   disambiguation matters.
-8. **Very large repositories and cross-language monorepos are unmeasured.**
-
-## 4. Error model
-
-`CoreError` already distinguishes: `Storage`, `Parse`, `Embed`, `Io`, `Git`,
-`NotIndexed`, `DimensionMismatch`, `Cancelled`, `TimedOut`. Mapped to the
-required classes:
-
-| Required class | Representation |
-|---|---|
-| NotIndexed | `CoreError::NotIndexed` (also MCP `index_status`) |
-| IndexCorrupt | `CoreError::Storage(StorageError::Protocol/Sqlite)`; schema-version mismatch resets to empty |
-| UnsupportedRepository | no supported files indexed → empty index → `NotIndexed` |
-| ParseFailure | `CoreError::Parse`; per-file failures are skipped, not fatal |
-| Cancelled | `CoreError::Cancelled` |
-| TimedOut | `CoreError::TimedOut` |
-| ResourceLimit | enforced by clamping candidate counts (documented bounds) rather than erroring — a deliberate choice favouring graceful degradation |
-| InvalidQuery | rejected at the transport boundary (CLI mode/kind, MCP `-32602`); malformed *lexical* queries degrade to no lexical candidates rather than failing |
-| AmbiguousResolution | surfaced by `resolve_all` (not an error) |
-| InternalFailure | `CoreError::Storage/Embed/Io/Git`; MCP maps to `-32603` / `isError` |
-
-## 5. Verification commands
+## 3. Verification commands
 
 ```bash
 cargo fmt --all -- --check
 cargo check --workspace
 cargo test --workspace
 cargo clippy --workspace --all-targets --all-features -- -D warnings
-benchmarks/scripts/run_validation.sh
+benchmarks/scripts/run_final.sh
 ```
+
+---
+
+## 4. Declared limits (explicit)
+
+1. **Semantic top-1** is representation-limited (P@1 0.550). Recall is strong
+   (Hit@5 0.950). Improving it requires a better embedding representation, not
+   fusion-weight tuning; measured fusion changes did not help.
+2. **Context ordering** (P@1 0.100) inherits retrieval ordering; the right
+   symbol is usually present (Hit@5 0.800).
+3. **Relations are intra-file.** Cross-file calls are not linked.
+4. **Very large repositories** are supported up to the measured envelope; the
+   semantic scan is `O(N)` exact (no ANN), and beyond the envelope performance
+   degrades rather than being guaranteed.
+5. **Low-memory hosts** were validated by measuring RSS, not by running the
+   product on 4/8/16/32 GB machines.
+6. **`resolve` on a genuinely ambiguous name** is deterministic but not always
+   the intended symbol; `resolve_all` is the correct surface for disambiguation.

@@ -122,6 +122,28 @@ impl TantivyStore {
         Ok(())
     }
 
+    /// Marks every document belonging to `paths` for deletion in the shared
+    /// writer.
+    ///
+    /// Deletions are queued as term deletes and applied by the next
+    /// [`Self::commit`] in opstamp order. Call this **before**
+    /// [`Self::add_documents`] for a replacement version of the same file, so
+    /// the newly added documents survive the delete.
+    pub fn delete_by_file_paths(&self, paths: &[String]) -> Result<(), StorageError> {
+        if paths.is_empty() {
+            return Ok(());
+        }
+        let mut guard = self.lock_writer()?;
+        let writer = match guard.as_mut() {
+            Some(writer) => writer,
+            None => guard.insert(self.index.writer(WRITER_HEAP_BYTES)?),
+        };
+        for path in paths {
+            writer.delete_term(Term::from_field_text(self.file_path, path));
+        }
+        Ok(())
+    }
+
     /// Commits all pending documents, releases the writer, and reloads the
     /// reader so subsequent queries observe the committed state.
     ///

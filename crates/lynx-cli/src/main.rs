@@ -30,7 +30,10 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Index a repository into <path>/.lynx (persistent artifact)
+    /// Build or incrementally update the persistent index at <path>/.lynx
+    ///
+    /// Only files added, modified, or deleted since the last pass are
+    /// re-parsed and re-embedded.
     Index {
         /// Repository root to index (default: current directory)
         #[arg(default_value = ".")]
@@ -38,7 +41,7 @@ enum Commands {
         /// Include test, mock, and generated files
         #[arg(long)]
         include_tests: bool,
-        /// Rebuild, replacing an existing .lynx
+        /// Discard the existing index and rebuild from scratch
         #[arg(long)]
         force: bool,
     },
@@ -72,8 +75,12 @@ enum Commands {
         #[arg(long, default_value_t = 2048)]
         token_budget: usize,
     },
-    /// Print provenance and population counts of the persistent index
-    Status,
+    /// Print provenance, population counts, and freshness of the index
+    Status {
+        /// Skip the workspace freshness re-scan (prints counts only)
+        #[arg(long)]
+        no_check: bool,
+    },
     /// Launch the stdio MCP server
     Mcp {
         /// Include test, mock, and generated files in a freshly built index
@@ -103,7 +110,7 @@ fn main() -> Result<()> {
             query,
             token_budget,
         } => context(&query, token_budget),
-        Commands::Status => status(),
+        Commands::Status { no_check } => status(!no_check),
         Commands::Mcp { include_tests } => lynx_mcp::run(lynx_mcp::ServerConfig {
             workspace_root: workspace_root()?,
             include_tests,
@@ -116,26 +123,38 @@ fn index(path: &Path, include_tests: bool, force: bool) -> Result<()> {
         .canonicalize()
         .with_context(|| format!("resolving {}", path.display()))?;
     let storage = storage_root(&root);
-    if storage.exists() {
-        if !force {
-            bail!(
-                "{} already exists; pass --force to rebuild it from scratch",
-                storage.display()
-            );
-        }
+    if force && storage.exists() {
+        // A forced rebuild discards the artifact outright, guaranteeing no
+        // stale segment or row can survive.
         std::fs::remove_dir_all(&storage)
             .with_context(|| format!("removing existing {}", storage.display()))?;
     }
-    println!("Indexing {} into {}/", root.display(), storage.display());
-    let session = Session::build(&root, include_tests)?;
-    let status = session.engine().index_status();
-    println!(
-        "Indexed {} files, {} symbols, {} relations (capability {}).",
-        status.file_count,
-        status.symbol_count,
-        status.relation_count,
-        capability_name(status.capability_level),
-    );
+    let (session, update) = Session::update(&root, include_tests)?;
+    let status = update.status.clone();
+    let plan = update.plan;
+    if plan.is_empty() && !force {
+        println!(
+            "Up to date: {} files, {} symbols, {} relations unchanged.",
+            status.file_count, status.symbol_count, status.relation_count,
+        );
+    } else {
+        println!(
+            "Indexed {}: +{} added, ~{} modified, -{} deleted, {} unchanged.",
+            storage.display(),
+            plan.added.len(),
+            plan.modified.len(),
+            plan.deleted.len(),
+            plan.unchanged,
+        );
+        println!(
+            "Now {} files, {} symbols, {} relations (capability {}).",
+            status.file_count,
+            status.symbol_count,
+            status.relation_count,
+            capability_name(status.capability_level),
+        );
+    }
+    let _ = session;
     Ok(())
 }
 
@@ -192,6 +211,7 @@ fn print_explain(query: &str, outcome: &lynx_core::SearchOutcome) {
     println!("\n--- explain ---");
     println!("query_id            {}", report.query_id);
     println!("query               {query}");
+    println!("class               {}", report.class.as_str());
     println!("state               {:?}", report.state);
     println!("lexical_candidates  {}", report.lexical_candidates);
     println!("semantic_candidates {}", report.semantic_candidates);
@@ -304,7 +324,7 @@ fn context(query: &str, token_budget: usize) -> Result<()> {
     Ok(())
 }
 
-fn status() -> Result<()> {
+fn status(check: bool) -> Result<()> {
     let session = open_structural_session()?;
     let status = session.engine().index_status();
     println!("workspace   {}", session.workspace_root().display());
@@ -317,6 +337,18 @@ fn status() -> Result<()> {
         println!("commit      {commit}");
     }
     println!("dirty       {}", status.snapshot.is_dirty);
+    if check {
+        // The authoritative freshness check re-scans the workspace and runs a
+        // SQLite integrity check; it is explicit, never paid on the query path.
+        let freshness = session.engine().freshness()?;
+        println!("freshness   {}", freshness.as_str());
+        if matches!(
+            freshness,
+            lynx_core::Freshness::Stale | lynx_core::Freshness::Missing
+        ) {
+            println!("            run `lx index` to refresh");
+        }
+    }
     Ok(())
 }
 

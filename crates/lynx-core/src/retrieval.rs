@@ -15,6 +15,12 @@ pub const RRF_K: f32 = 60.0;
 /// Each list maps a symbol hash to its rank (0 = best). A symbol present in
 /// both lists accumulates contributions from each, favouring items that rank
 /// well across channels.
+///
+/// RRF is symmetric, so `(lex=i, sem=j)` and `(lex=j, sem=i)` score **exactly**
+/// equal. Such ties are resolved deterministically by the lexical rank first
+/// (then semantic rank, then hash): when fusion cannot separate two candidates,
+/// the one matched better by the high-precision exact-term channel is preferred.
+/// This is a total, stable order independent of the arbitrary hash values.
 pub fn rrf_fuse(lexical: &[(String, usize)], semantic: &[(String, usize)]) -> Vec<(String, f32)> {
     let mut scores: HashMap<String, f32> = HashMap::new();
     for (hash, rank) in lexical {
@@ -23,11 +29,28 @@ pub fn rrf_fuse(lexical: &[(String, usize)], semantic: &[(String, usize)]) -> Ve
     for (hash, rank) in semantic {
         *scores.entry(hash.clone()).or_insert(0.0) += 1.0 / (RRF_K + *rank as f32);
     }
+    let lex_of: HashMap<&str, usize> = lexical.iter().map(|(h, r)| (h.as_str(), *r)).collect();
+    let sem_of: HashMap<&str, usize> = semantic.iter().map(|(h, r)| (h.as_str(), *r)).collect();
+    let missing = usize::MAX;
+
     let mut fused: Vec<(String, f32)> = scores.into_iter().collect();
-    // Deterministic: score descending, then hash ascending to break ties.
     fused.sort_by(|a, b| {
         b.1.partial_cmp(&a.1)
             .unwrap_or(Ordering::Equal)
+            .then_with(|| {
+                lex_of
+                    .get(a.0.as_str())
+                    .copied()
+                    .unwrap_or(missing)
+                    .cmp(&lex_of.get(b.0.as_str()).copied().unwrap_or(missing))
+            })
+            .then_with(|| {
+                sem_of
+                    .get(a.0.as_str())
+                    .copied()
+                    .unwrap_or(missing)
+                    .cmp(&sem_of.get(b.0.as_str()).copied().unwrap_or(missing))
+            })
             .then_with(|| a.0.cmp(&b.0))
     });
     fused
@@ -204,20 +227,40 @@ pub const NOISE_PENALTY_TEST: f32 = 0.5;
 /// Score multiplier applied to symbols located in vendored/third-party paths.
 pub const NOISE_PENALTY_VENDOR: f32 = 0.25;
 
-/// Query classification: a bare symbol reference versus natural language.
+/// Query classification: which retrieval route an intent takes.
 ///
-/// Exact symbol queries are routed through deterministic exact resolution
-/// (Rule: deterministic before probabilistic) instead of ranking.
+/// Symbol and qualified-symbol queries are routed through deterministic exact
+/// resolution first (deterministic before probabilistic); only conceptual
+/// queries depend primarily on ranked retrieval. This keeps `Login`,
+/// `auth.Login`, and `ValidateToken` from becoming embedding searches.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum QueryClass {
-    /// A single identifier/token (`Login`, `auth::service::Login`, `Server.Start`).
+    /// A single bare identifier (`Login`, `ValidateToken`).
     Symbol,
+    /// A qualified path (`auth::service::Login`, `Server.Start`).
+    Qualified,
     /// Anything else: natural language or multi-token intent.
     Natural,
 }
 
-/// Classifies a query. A query is a [`QueryClass::Symbol`] when it is a single
-/// token composed only of symbol characters and containing a letter.
+impl QueryClass {
+    /// Stable lowercase wire name.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            QueryClass::Symbol => "symbol",
+            QueryClass::Qualified => "qualified",
+            QueryClass::Natural => "natural",
+        }
+    }
+
+    /// Whether the class has a deterministic exact-resolution route, so its
+    /// primary answer must not depend on ranking.
+    pub fn is_deterministic(self) -> bool {
+        matches!(self, QueryClass::Symbol | QueryClass::Qualified)
+    }
+}
+
+/// Classifies a query into its retrieval route.
 pub fn classify_query(query: &str) -> QueryClass {
     let trimmed = query.trim();
     if trimmed.is_empty() || trimmed.chars().any(char::is_whitespace) {
@@ -226,10 +269,17 @@ pub fn classify_query(query: &str) -> QueryClass {
     let symbol_chars = trimmed
         .chars()
         .all(|c| c.is_alphanumeric() || matches!(c, '_' | ':' | '.' | '#' | '$'));
-    if symbol_chars && trimmed.chars().any(char::is_alphabetic) {
-        QueryClass::Symbol
+    if !symbol_chars || !trimmed.chars().any(char::is_alphabetic) {
+        return QueryClass::Natural;
+    }
+    if trimmed.contains("::")
+        || trimmed.contains('.')
+        || trimmed.contains('#')
+        || trimmed.contains('$')
+    {
+        QueryClass::Qualified
     } else {
-        QueryClass::Natural
+        QueryClass::Symbol
     }
 }
 
@@ -311,11 +361,13 @@ pub fn finalize_fused(mut evidence: Vec<Evidence>) -> Vec<Evidence> {
             item.score /= max;
         }
     }
+    // Stable sort by score only: equal scores keep the deterministic fused
+    // order established by [`rrf_fuse`] (lexical-rank tie-break), so ranking
+    // never depends on opaque content hashes.
     evidence.sort_by(|a, b| {
         b.score
             .partial_cmp(&a.score)
             .unwrap_or(std::cmp::Ordering::Equal)
-            .then_with(|| a.identity.content_hash.cmp(&b.identity.content_hash))
     });
     for item in evidence.iter_mut() {
         item.retrieval_mode = RetrievalMode::Hybrid;

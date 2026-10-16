@@ -18,10 +18,33 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
+use std::sync::Arc;
+
 use lynx_embed::{EmbedError, VectorProvider};
 use lynx_protocol::{RelationKind, RetrievalMode};
 use pizen_lynx_core::{Engine, QueryOptions};
 use serde::Deserialize;
+
+/// A `VectorProvider` shareable across engines.
+///
+/// The product path constructs the embedding model **once per process** and uses
+/// that single instance for both indexing and querying (the MCP server, the CLI,
+/// and every session hold one provider). The harness must do the same: building
+/// a second model instance in one process is not the production path and yields
+/// different inference results from a fresh process.
+struct SharedProvider(Arc<dyn VectorProvider>);
+
+impl VectorProvider for SharedProvider {
+    fn embed_query(&self, text: &str) -> Result<Vec<f32>, EmbedError> {
+        self.0.embed_query(text)
+    }
+    fn embed_batch(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>, EmbedError> {
+        self.0.embed_batch(texts)
+    }
+    fn dimension(&self) -> usize {
+        self.0.dimension()
+    }
+}
 
 /// Hermetic deterministic provider (fake 384-d vectors) — stability/regression
 /// only; semantic quality requires `LYNX_REAL_EMBED=1`.
@@ -118,10 +141,15 @@ fn main() {
 
     let storage = tempfile::tempdir().expect("temp storage");
 
+    // One embedding-model instance for the whole process, exactly as the
+    // production transports hold it.
+    let provider: Arc<dyn VectorProvider> = make_provider(real);
+
     // Lifecycle: index -> drop -> reopen (hydrate).
     let index_start = Instant::now();
     {
-        let engine = make_engine(storage.path(), real);
+        let engine = Engine::new(storage.path(), Box::new(SharedProvider(provider.clone())))
+            .expect("engine");
         let status = engine.index_repository(&corpus, false).expect("index");
         eprintln!(
             "indexed {} files, {} symbols, {} relations in {:?}",
@@ -132,7 +160,8 @@ fn main() {
         );
     }
     let hydrate_start = Instant::now();
-    let engine = make_engine(storage.path(), real);
+    let engine =
+        Engine::new(storage.path(), Box::new(SharedProvider(provider.clone()))).expect("engine");
     let hydrate = hydrate_start.elapsed();
     let status = engine.index_status();
 
@@ -168,12 +197,16 @@ fn main() {
     );
 }
 
-fn make_engine(storage: &Path, real: bool) -> Engine {
+fn make_provider(real: bool) -> Arc<dyn VectorProvider> {
     if real {
-        let provider = lynx_embed::FastEmbedProvider::new().expect("onnx model");
-        Engine::new(storage, Box::new(provider)).expect("engine")
+        if let Some(home) = std::env::var_os("HOME") {
+            let cache = PathBuf::from(home).join(".cache/lynx/fastembed");
+            Arc::new(lynx_embed::FastEmbedProvider::with_cache_dir(cache).expect("onnx model"))
+        } else {
+            Arc::new(lynx_embed::FastEmbedProvider::new().expect("onnx model"))
+        }
     } else {
-        Engine::new(storage, Box::new(FakeProvider)).expect("engine")
+        Arc::new(FakeProvider)
     }
 }
 

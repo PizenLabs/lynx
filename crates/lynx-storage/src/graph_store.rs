@@ -24,11 +24,16 @@ use rusqlite::{params, Connection};
 use crate::error::StorageError;
 
 /// Current on-disk schema version. Bump whenever the layout changes.
-pub const SCHEMA_VERSION: i64 = 2;
+pub const SCHEMA_VERSION: i64 = 3;
 
 /// Maximum number of `?` bind parameters per statement. SQLite's default limit
 /// is 999; chunk large `IN (...)` lookups below it.
 const PARAM_CHUNK: usize = 500;
+
+/// Metadata key holding the content hash of the most recently persisted
+/// snapshot. `latest_snapshot` reads this rather than relying on timestamp
+/// ordering, which is not monotonic at second resolution.
+pub const LATEST_SNAPSHOT_META: &str = "latest_snapshot";
 
 /// Relational store over `rusqlite` with WAL journaling.
 ///
@@ -36,6 +41,9 @@ const PARAM_CHUNK: usize = 500;
 /// and safe to share across threads.
 pub struct GraphStore {
     conn: Mutex<Connection>,
+    /// Whether opening the database observed a schema-version mismatch and
+    /// reset the substrate. Surfaced as an `Incompatible` freshness signal.
+    schema_reset: bool,
 }
 
 impl GraphStore {
@@ -58,14 +66,36 @@ impl GraphStore {
         apply_pragmas(&conn)?;
         // A version mismatch means an older or partial schema; reset to current.
         let version: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
-        if version != SCHEMA_VERSION {
+        let schema_reset = if version != SCHEMA_VERSION {
             drop_all_tables(&conn)?;
             create_tables(&conn)?;
             conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
-        }
+            version != 0
+        } else {
+            false
+        };
         Ok(Self {
             conn: Mutex::new(conn),
+            schema_reset,
         })
+    }
+
+    /// Whether opening this database discarded an incompatible schema.
+    ///
+    /// A `true` value means the previous index was written by a different
+    /// Lynx schema version and has been reset to empty; the caller should
+    /// re-index rather than trust the (now empty) substrate.
+    pub fn schema_reset(&self) -> bool {
+        self.schema_reset
+    }
+
+    /// Runs SQLite's `PRAGMA quick_check`, returning `true` when the database
+    /// is structurally sound. A corrupt artifact fails this instead of
+    /// silently serving partial or inconsistent state.
+    pub fn quick_check(&self) -> Result<bool, StorageError> {
+        let conn = self.lock()?;
+        let result: String = conn.query_row("PRAGMA quick_check", [], |row| row.get(0))?;
+        Ok(result.eq_ignore_ascii_case("ok"))
     }
 
     /// Persists a workspace snapshot.
@@ -148,17 +178,71 @@ impl GraphStore {
         finish(conn, result)
     }
 
-    /// Records indexed file paths (workspace-relative), enabling an exact file
-    /// count and a future incremental pass.
-    pub fn insert_files(&self, paths: &[String], snapshot_hash: &str) -> Result<(), StorageError> {
+    /// Records the indexed files, their per-file content hash, and the snapshot
+    /// they belong to.
+    ///
+    /// This is the durable state an incremental pass diffs against: only paths
+    /// whose stored `content_hash` differs from the current file are re-parsed
+    /// and re-embedded.
+    pub fn upsert_files(
+        &self,
+        files: &[(String, String)],
+        snapshot_hash: &str,
+    ) -> Result<(), StorageError> {
+        let conn = self.lock()?;
+        conn.execute("BEGIN", [])?;
+        let result = files.iter().try_for_each(|(path, content_hash)| {
+            conn.execute(
+                "INSERT INTO files (path, content_hash, snapshot_hash) VALUES (?1, ?2, ?3)
+                 ON CONFLICT(path) DO UPDATE SET
+                    content_hash = excluded.content_hash,
+                    snapshot_hash = excluded.snapshot_hash",
+                params![path, content_hash, snapshot_hash],
+            )
+            .map(|_| ())
+        });
+        finish(conn, result)
+    }
+
+    /// Returns every indexed file as `(path, content_hash)`, ordered by path.
+    pub fn file_states(&self) -> Result<Vec<(String, String)>, StorageError> {
+        let conn = self.lock()?;
+        let mut statement = conn.prepare("SELECT path, content_hash FROM files ORDER BY path")?;
+        let mut rows = statement.query([])?;
+        let mut out = Vec::new();
+        while let Some(row) = rows.next()? {
+            out.push((row.get(0)?, row.get(1)?));
+        }
+        Ok(out)
+    }
+
+    /// Removes every row owned by the given workspace-relative file paths:
+    /// their symbols, the relations incident to those symbols, their embedding
+    /// vectors, and the file records themselves.
+    ///
+    /// Everything lands in one transaction, so an interrupted update can never
+    /// leave a file half-removed. Idempotent for unknown paths.
+    pub fn delete_files(&self, paths: &[String]) -> Result<(), StorageError> {
+        if paths.is_empty() {
+            return Ok(());
+        }
         let conn = self.lock()?;
         conn.execute("BEGIN", [])?;
         let result = paths.iter().try_for_each(|path| {
             conn.execute(
-                "INSERT OR IGNORE INTO files (path, snapshot_hash) VALUES (?1, ?2)",
-                params![path, snapshot_hash],
-            )
-            .map(|_| ())
+                "DELETE FROM relations
+                 WHERE source_id IN (SELECT content_hash FROM symbols WHERE file_path = ?1)
+                    OR target_id IN (SELECT content_hash FROM symbols WHERE file_path = ?1)",
+                params![path],
+            )?;
+            conn.execute(
+                "DELETE FROM embeddings
+                 WHERE content_hash IN (SELECT content_hash FROM symbols WHERE file_path = ?1)",
+                params![path],
+            )?;
+            conn.execute("DELETE FROM symbols WHERE file_path = ?1", params![path])?;
+            conn.execute("DELETE FROM files WHERE path = ?1", params![path])?;
+            Ok(())
         });
         finish(conn, result)
     }
@@ -352,13 +436,22 @@ impl GraphStore {
     }
 
     /// Returns the most recently persisted workspace snapshot, if any.
+    ///
+    /// The "latest" snapshot is the content hash recorded under
+    /// [`LATEST_SNAPSHOT_META`] by the last indexing pass, falling back to
+    /// timestamp ordering for indexes written before that key existed.
     pub fn latest_snapshot(&self) -> Result<Option<Snapshot>, StorageError> {
         let conn = self.lock()?;
         let mut statement = conn.prepare_cached(
             "SELECT content_hash, commit_hash, workspace_root, is_dirty
-             FROM snapshots ORDER BY created_at DESC, content_hash ASC LIMIT 1",
+             FROM snapshots
+             WHERE content_hash = COALESCE(
+                 (SELECT value FROM meta WHERE key = ?1),
+                 (SELECT content_hash FROM snapshots
+                  ORDER BY created_at DESC, content_hash ASC LIMIT 1))
+             LIMIT 1",
         )?;
-        let mut rows = statement.query([])?;
+        let mut rows = statement.query(params![LATEST_SNAPSHOT_META])?;
         match rows.next()? {
             Some(row) => Ok(Some(Snapshot {
                 content_hash: row.get(0)?,
@@ -548,6 +641,7 @@ fn create_tables(conn: &Connection) -> Result<(), StorageError> {
         );
         CREATE TABLE IF NOT EXISTS files (
             path TEXT PRIMARY KEY,
+            content_hash TEXT NOT NULL,
             snapshot_hash TEXT NOT NULL
         );
         CREATE TABLE IF NOT EXISTS embeddings (

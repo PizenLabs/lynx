@@ -105,11 +105,12 @@ pub(crate) fn definitions() -> Value {
             },
             {
                 "name": "index_status",
-                "description": "Provenance and population counts of the index this server is serving.",
+                "description": "Provenance and population counts of the index this server is serving. Pass check_freshness to re-scan the workspace and report whether the index is still current.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
-                        "path": {"type": "string", "description": "Optional workspace path; must match the served workspace root"}
+                        "path": {"type": "string", "description": "Optional workspace path; must match the served workspace root"},
+                        "check_freshness": {"type": "boolean", "description": "Re-scan the workspace and report freshness (default: false)"}
                     },
                     "required": []
                 }
@@ -291,6 +292,8 @@ fn index_status(
     #[derive(Deserialize)]
     struct Params {
         path: Option<String>,
+        #[serde(default)]
+        check_freshness: bool,
     }
     let p: Params = parse(params)?;
     if let Some(requested) = p.path.as_deref() {
@@ -301,16 +304,26 @@ fn index_status(
             )));
         }
     }
-    Ok(status_json(&engine.index_status()))
+    let freshness = if p.check_freshness {
+        Some(
+            engine
+                .freshness()
+                .map_err(|e| ToolFailure::internal(e.to_string()))?,
+        )
+    } else {
+        None
+    };
+    Ok(status_json(&engine.index_status(), freshness))
 }
 
-fn status_json(status: &IndexStatus) -> Value {
+fn status_json(status: &IndexStatus, freshness: Option<lynx_core::Freshness>) -> Value {
     json!({
         "snapshot": status.snapshot,
         "file_count": status.file_count,
         "symbol_count": status.symbol_count,
         "relation_count": status.relation_count,
         "capability_level": status.capability_level,
+        "freshness": freshness.map(|f| f.as_str()).unwrap_or("unknown"),
     })
 }
 
