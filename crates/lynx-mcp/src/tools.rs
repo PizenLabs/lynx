@@ -1,4 +1,4 @@
-//! The seven MCP tools and their strict mapping onto [`Engine`] primitives.
+//! The eight MCP tools and their strict mapping onto [`Engine`] primitives.
 //!
 //! No internal storage or database surface is exposed: every tool delegates
 //! to exactly one retrieval primitive and serializes its protocol result.
@@ -35,11 +35,22 @@ pub(crate) fn definitions() -> Value {
             },
             {
                 "name": "resolve",
-                "description": "Exact symbol lookup by fully-qualified name or trailing name. Returns the resolved Evidence with SymbolIdentity coordinates, or null.",
+                "description": "Exact symbol lookup by fully-qualified name or trailing name. Returns the deterministic best Evidence with SymbolIdentity coordinates, or null. When several symbols share a trailing name, this returns the preferred one; use `resolve_all` to see every candidate.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
                         "name": {"type": "string", "description": "Symbol fqdn (`auth::service::login`) or trailing name (`login`)"}
+                    },
+                    "required": ["name"]
+                }
+            },
+            {
+                "name": "resolve_all",
+                "description": "Every symbol matching a fqdn or trailing name, ordered deterministically (production before test/vendor, exact fqdn first, then lexicographic). Exposes ambiguity instead of hiding it.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string", "description": "Symbol fqdn or trailing name"}
                     },
                     "required": ["name"]
                 }
@@ -94,11 +105,12 @@ pub(crate) fn definitions() -> Value {
             },
             {
                 "name": "index_status",
-                "description": "Provenance and population counts of the index this server is serving.",
+                "description": "Provenance and population counts of the index this server is serving. Pass check_freshness to re-scan the workspace and report whether the index is still current.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
-                        "path": {"type": "string", "description": "Optional workspace path; must match the served workspace root"}
+                        "path": {"type": "string", "description": "Optional workspace path; must match the served workspace root"},
+                        "check_freshness": {"type": "boolean", "description": "Re-scan the workspace and report freshness (default: false)"}
                     },
                     "required": []
                 }
@@ -146,6 +158,7 @@ pub(crate) fn dispatch(
     match tool {
         "search" => search(engine, params),
         "resolve" => resolve(engine, params),
+        "resolve_all" => resolve_all(engine, params),
         "inspect" => inspect(engine, params),
         "relations" => relations(engine, params),
         "similar" => similar(engine, params),
@@ -161,6 +174,7 @@ pub(crate) fn dispatch(
 pub(crate) const TOOL_NAMES: &[&str] = &[
     "search",
     "resolve",
+    "resolve_all",
     "inspect",
     "relations",
     "similar",
@@ -196,6 +210,18 @@ fn resolve(engine: &Engine, params: &Value) -> Result<Value, ToolFailure> {
         .resolve(&p.name)
         .map_err(|e| ToolFailure::internal(e.to_string()))?;
     Ok(serde_json::to_value(evidence).expect("Option<Evidence> serializes"))
+}
+
+fn resolve_all(engine: &Engine, params: &Value) -> Result<Value, ToolFailure> {
+    #[derive(Deserialize)]
+    struct Params {
+        name: String,
+    }
+    let p: Params = parse(params)?;
+    let matches = engine
+        .resolve_all(&p.name)
+        .map_err(|e| ToolFailure::internal(e.to_string()))?;
+    Ok(serde_json::to_value(matches).expect("Vec<Evidence> serializes"))
 }
 
 fn inspect(engine: &Engine, params: &Value) -> Result<Value, ToolFailure> {
@@ -266,6 +292,8 @@ fn index_status(
     #[derive(Deserialize)]
     struct Params {
         path: Option<String>,
+        #[serde(default)]
+        check_freshness: bool,
     }
     let p: Params = parse(params)?;
     if let Some(requested) = p.path.as_deref() {
@@ -276,16 +304,26 @@ fn index_status(
             )));
         }
     }
-    Ok(status_json(&engine.index_status()))
+    let freshness = if p.check_freshness {
+        Some(
+            engine
+                .freshness()
+                .map_err(|e| ToolFailure::internal(e.to_string()))?,
+        )
+    } else {
+        None
+    };
+    Ok(status_json(&engine.index_status(), freshness))
 }
 
-fn status_json(status: &IndexStatus) -> Value {
+fn status_json(status: &IndexStatus, freshness: Option<lynx_core::Freshness>) -> Value {
     json!({
         "snapshot": status.snapshot,
         "file_count": status.file_count,
         "symbol_count": status.symbol_count,
         "relation_count": status.relation_count,
         "capability_level": status.capability_level,
+        "freshness": freshness.map(|f| f.as_str()).unwrap_or("unknown"),
     })
 }
 

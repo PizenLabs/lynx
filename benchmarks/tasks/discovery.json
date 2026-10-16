@@ -1,0 +1,840 @@
+{
+  "corpus": "auth-service",
+  "tasks": [
+    {
+      "id": "exact-01",
+      "category": "exact",
+      "primitive": "resolve",
+      "query": "ParseJWT"
+    },
+    {
+      "id": "exact-02",
+      "category": "exact",
+      "primitive": "resolve",
+      "query": "SignJWT"
+    },
+    {
+      "id": "exact-03",
+      "category": "exact",
+      "primitive": "resolve",
+      "query": "ValidateToken"
+    },
+    {
+      "id": "exact-04",
+      "category": "exact",
+      "primitive": "resolve",
+      "query": "RefreshToken"
+    },
+    {
+      "id": "exact-05",
+      "category": "exact",
+      "primitive": "resolve",
+      "query": "issueToken"
+    },
+    {
+      "id": "exact-06",
+      "category": "exact",
+      "primitive": "resolve",
+      "query": "verifyPassword"
+    },
+    {
+      "id": "exact-07",
+      "category": "exact",
+      "primitive": "resolve",
+      "query": "Authenticate"
+    },
+    {
+      "id": "exact-08",
+      "category": "exact",
+      "primitive": "resolve",
+      "query": "Authorize"
+    },
+    {
+      "id": "exact-09",
+      "category": "exact",
+      "primitive": "resolve",
+      "query": "bearerToken"
+    },
+    {
+      "id": "exact-10",
+      "category": "exact",
+      "primitive": "resolve",
+      "query": "EstablishSession"
+    },
+    {
+      "id": "exact-11",
+      "category": "exact",
+      "primitive": "resolve",
+      "query": "NewMiddleware"
+    },
+    {
+      "id": "exact-12",
+      "category": "exact",
+      "primitive": "resolve",
+      "query": "Expired"
+    },
+    {
+      "id": "exact-13",
+      "category": "exact",
+      "primitive": "resolve",
+      "query": "RevokeSession"
+    },
+    {
+      "id": "exact-14",
+      "category": "exact",
+      "primitive": "resolve",
+      "query": "ExpirationSeconds"
+    },
+    {
+      "id": "exact-15",
+      "category": "exact",
+      "primitive": "resolve",
+      "query": "DefaultTokenConfig"
+    },
+    {
+      "id": "exact-16",
+      "category": "exact",
+      "primitive": "resolve",
+      "query": "validate_token"
+    },
+    {
+      "id": "exact-17",
+      "category": "exact",
+      "primitive": "resolve",
+      "query": "refresh_token"
+    },
+    {
+      "id": "exact-18",
+      "category": "exact",
+      "primitive": "resolve",
+      "query": "is_expired"
+    },
+    {
+      "id": "exact-19",
+      "category": "exact",
+      "primitive": "resolve",
+      "query": "issue"
+    },
+    {
+      "id": "exact-20",
+      "category": "exact",
+      "primitive": "resolve",
+      "query": "createSession"
+    },
+    {
+      "id": "exact-21",
+      "category": "exact",
+      "primitive": "resolve",
+      "query": "transitionToAuthenticated"
+    },
+    {
+      "id": "exact-22",
+      "category": "exact",
+      "primitive": "resolve",
+      "query": "logout"
+    },
+    {
+      "id": "exact-23",
+      "category": "exact",
+      "primitive": "resolve",
+      "query": "rank"
+    },
+    {
+      "id": "exact-24",
+      "category": "exact",
+      "primitive": "resolve",
+      "query": "Candidate"
+    },
+    {
+      "id": "exact-25",
+      "category": "exact",
+      "primitive": "resolve",
+      "query": "Retriever"
+    },
+    {
+      "id": "exact-26",
+      "category": "exact",
+      "primitive": "resolve",
+      "query": "TokenConfig"
+    },
+    {
+      "id": "exact-27",
+      "category": "exact",
+      "primitive": "resolve",
+      "query": "AdminService"
+    },
+    {
+      "id": "exact-28",
+      "category": "exact",
+      "primitive": "resolve",
+      "query": "Middleware"
+    },
+    {
+      "id": "exact-29",
+      "category": "exact",
+      "primitive": "resolve",
+      "query": "TokenService"
+    },
+    {
+      "id": "exact-30",
+      "category": "exact",
+      "primitive": "resolve",
+      "query": "Claims"
+    },
+    {
+      "id": "exact-31",
+      "category": "exact",
+      "primitive": "resolve",
+      "query": "AuthService"
+    },
+    {
+      "id": "exact-32",
+      "category": "exact",
+      "primitive": "resolve",
+      "query": "auth::ValidateToken"
+    },
+    {
+      "id": "exact-33",
+      "category": "exact",
+      "primitive": "resolve",
+      "query": "service::token::TokenService.validate_token"
+    },
+    {
+      "id": "exact-34",
+      "category": "exact",
+      "primitive": "resolve",
+      "query": "auth::AuthService::Login"
+    },
+    {
+      "id": "exact-35",
+      "category": "exact",
+      "primitive": "resolve",
+      "query": "config::TokenConfig::ExpirationSeconds"
+    },
+    {
+      "id": "lexical-01",
+      "category": "lexical",
+      "primitive": "search",
+      "query": "jwt parsing"
+    },
+    {
+      "id": "lexical-02",
+      "category": "lexical",
+      "primitive": "search",
+      "query": "token signature"
+    },
+    {
+      "id": "lexical-03",
+      "category": "lexical",
+      "primitive": "search",
+      "query": "credential verification"
+    },
+    {
+      "id": "lexical-04",
+      "category": "lexical",
+      "primitive": "search",
+      "query": "password check"
+    },
+    {
+      "id": "lexical-05",
+      "category": "lexical",
+      "primitive": "search",
+      "query": "bearer header"
+    },
+    {
+      "id": "lexical-06",
+      "category": "lexical",
+      "primitive": "search",
+      "query": "session creation"
+    },
+    {
+      "id": "lexical-07",
+      "category": "lexical",
+      "primitive": "search",
+      "query": "session logout"
+    },
+    {
+      "id": "lexical-08",
+      "category": "lexical",
+      "primitive": "search",
+      "query": "token expiry"
+    },
+    {
+      "id": "lexical-09",
+      "category": "lexical",
+      "primitive": "search",
+      "query": "refresh token"
+    },
+    {
+      "id": "lexical-10",
+      "category": "lexical",
+      "primitive": "search",
+      "query": "access token issue"
+    },
+    {
+      "id": "lexical-11",
+      "category": "lexical",
+      "primitive": "search",
+      "query": "reciprocal rank fusion"
+    },
+    {
+      "id": "lexical-12",
+      "category": "lexical",
+      "primitive": "search",
+      "query": "retriever candidates"
+    },
+    {
+      "id": "lexical-13",
+      "category": "lexical",
+      "primitive": "search",
+      "query": "token ttl config"
+    },
+    {
+      "id": "lexical-14",
+      "category": "lexical",
+      "primitive": "search",
+      "query": "revoke admin session"
+    },
+    {
+      "id": "lexical-15",
+      "category": "lexical",
+      "primitive": "search",
+      "query": "authorize handler"
+    },
+    {
+      "id": "lexical-16",
+      "category": "lexical",
+      "primitive": "search",
+      "query": "authenticate middleware"
+    },
+    {
+      "id": "lexical-17",
+      "category": "lexical",
+      "primitive": "search",
+      "query": "claims expiry"
+    },
+    {
+      "id": "lexical-18",
+      "category": "lexical",
+      "primitive": "search",
+      "query": "candidate score"
+    },
+    {
+      "id": "lexical-19",
+      "category": "lexical",
+      "primitive": "search",
+      "query": "establish session"
+    },
+    {
+      "id": "lexical-20",
+      "category": "lexical",
+      "primitive": "search",
+      "query": "middleware bearer token"
+    },
+    {
+      "id": "semantic-01",
+      "category": "semantic",
+      "primitive": "search",
+      "query": "how are user credentials checked"
+    },
+    {
+      "id": "semantic-02",
+      "category": "semantic",
+      "primitive": "search",
+      "query": "decide a token is no longer valid"
+    },
+    {
+      "id": "semantic-03",
+      "category": "semantic",
+      "primitive": "search",
+      "query": "create a signed credential for a subject"
+    },
+    {
+      "id": "semantic-04",
+      "category": "semantic",
+      "primitive": "search",
+      "query": "exchange a refresh credential for a new access one"
+    },
+    {
+      "id": "semantic-05",
+      "category": "semantic",
+      "primitive": "search",
+      "query": "read the incoming authorization header"
+    },
+    {
+      "id": "semantic-06",
+      "category": "semantic",
+      "primitive": "search",
+      "query": "move an anonymous user into an authenticated state"
+    },
+    {
+      "id": "semantic-07",
+      "category": "semantic",
+      "primitive": "search",
+      "query": "end the user's web session"
+    },
+    {
+      "id": "semantic-08",
+      "category": "semantic",
+      "primitive": "search",
+      "query": "how long an access token remains usable"
+    },
+    {
+      "id": "semantic-09",
+      "category": "semantic",
+      "primitive": "search",
+      "query": "guard an endpoint from unauthenticated callers"
+    },
+    {
+      "id": "semantic-10",
+      "category": "semantic",
+      "primitive": "search",
+      "query": "decode a compact jwt"
+    },
+    {
+      "id": "semantic-11",
+      "category": "semantic",
+      "primitive": "search",
+      "query": "bind an authenticated principal to the request"
+    },
+    {
+      "id": "semantic-12",
+      "category": "semantic",
+      "primitive": "search",
+      "query": "fuse two ranked result lists"
+    },
+    {
+      "id": "semantic-13",
+      "category": "semantic",
+      "primitive": "search",
+      "query": "start a fresh client session"
+    },
+    {
+      "id": "semantic-14",
+      "category": "semantic",
+      "primitive": "search",
+      "query": "administrator logs in"
+    },
+    {
+      "id": "semantic-15",
+      "category": "semantic",
+      "primitive": "search",
+      "query": "invalidate an administrative session"
+    },
+    {
+      "id": "semantic-16",
+      "category": "semantic",
+      "primitive": "search",
+      "query": "production token policy defaults"
+    },
+    {
+      "id": "semantic-17",
+      "category": "semantic",
+      "primitive": "search",
+      "query": "assert an access token is well formed and unexpired"
+    },
+    {
+      "id": "semantic-18",
+      "category": "semantic",
+      "primitive": "search",
+      "query": "construct the request authentication middleware"
+    },
+    {
+      "id": "semantic-19",
+      "category": "semantic",
+      "primitive": "search",
+      "query": "mint an access token for a subject"
+    },
+    {
+      "id": "semantic-20",
+      "category": "semantic",
+      "primitive": "search",
+      "query": "check that a token has not passed its expiry"
+    },
+    {
+      "id": "structural-01",
+      "category": "structural",
+      "primitive": "resolve",
+      "query": "auth::Middleware::Authenticate"
+    },
+    {
+      "id": "structural-02",
+      "category": "structural",
+      "primitive": "resolve",
+      "query": "auth::AuthService::RefreshToken"
+    },
+    {
+      "id": "structural-03",
+      "category": "structural",
+      "primitive": "resolve",
+      "query": "service::token::TokenService"
+    },
+    {
+      "id": "structural-04",
+      "category": "structural",
+      "primitive": "resolve",
+      "query": "retriever::Retriever::rank"
+    },
+    {
+      "id": "structural-05",
+      "category": "structural",
+      "primitive": "resolve",
+      "query": "config::TokenConfig::ExpirationSeconds"
+    },
+    {
+      "id": "structural-06",
+      "category": "structural",
+      "primitive": "resolve",
+      "query": "auth::AdminService"
+    },
+    {
+      "id": "structural-07",
+      "category": "structural",
+      "primitive": "resolve",
+      "query": "web::src::session"
+    },
+    {
+      "id": "structural-08",
+      "category": "structural",
+      "primitive": "resolve",
+      "query": "internal::auth::middleware"
+    },
+    {
+      "id": "structural-09",
+      "category": "structural",
+      "primitive": "resolve",
+      "query": "auth::Claims::Expired"
+    },
+    {
+      "id": "structural-10",
+      "category": "structural",
+      "primitive": "resolve",
+      "query": "auth::ValidateToken"
+    },
+    {
+      "id": "structural-11",
+      "category": "structural",
+      "primitive": "resolve",
+      "query": "auth::EstablishSession"
+    },
+    {
+      "id": "structural-12",
+      "category": "structural",
+      "primitive": "resolve",
+      "query": "service::token::TokenService.validate_token"
+    },
+    {
+      "id": "structural-13",
+      "category": "structural",
+      "primitive": "resolve",
+      "query": "retriever::Candidate"
+    },
+    {
+      "id": "structural-14",
+      "category": "structural",
+      "primitive": "resolve",
+      "query": "auth::Middleware"
+    },
+    {
+      "id": "structural-15",
+      "category": "structural",
+      "primitive": "resolve",
+      "query": "config::DefaultTokenConfig"
+    },
+    {
+      "id": "relation-01",
+      "category": "relation",
+      "primitive": "relations",
+      "query": "auth::AuthService::Login",
+      "kind": "Calls"
+    },
+    {
+      "id": "relation-02",
+      "category": "relation",
+      "primitive": "relations",
+      "query": "auth::AuthService::RefreshToken",
+      "kind": "Calls"
+    },
+    {
+      "id": "relation-03",
+      "category": "relation",
+      "primitive": "relations",
+      "query": "auth::Middleware::Authenticate",
+      "kind": "Calls"
+    },
+    {
+      "id": "relation-04",
+      "category": "relation",
+      "primitive": "relations",
+      "query": "service::token::TokenService.validate_token",
+      "kind": "Calls"
+    },
+    {
+      "id": "relation-05",
+      "category": "relation",
+      "primitive": "relations",
+      "query": "service::token::TokenService.refresh_token",
+      "kind": "Calls"
+    },
+    {
+      "id": "relation-06",
+      "category": "relation",
+      "primitive": "relations",
+      "query": "retriever::Retriever::rank",
+      "kind": "Calls"
+    },
+    {
+      "id": "relation-07",
+      "category": "relation",
+      "primitive": "relations",
+      "query": "auth::AuthService::issueToken",
+      "kind": "Calls"
+    },
+    {
+      "id": "relation-08",
+      "category": "relation",
+      "primitive": "relations",
+      "query": "auth::AuthService::verifyPassword",
+      "kind": "Calls"
+    },
+    {
+      "id": "relation-09",
+      "category": "relation",
+      "primitive": "relations",
+      "query": "auth::bearerToken",
+      "kind": "Calls"
+    },
+    {
+      "id": "relation-10",
+      "category": "relation",
+      "primitive": "relations",
+      "query": "service::token::TokenService.is_expired",
+      "kind": "Calls"
+    },
+    {
+      "id": "relation-11",
+      "category": "relation",
+      "primitive": "relations",
+      "query": "service::token::TokenService.issue",
+      "kind": "Calls"
+    },
+    {
+      "id": "relation-12",
+      "category": "relation",
+      "primitive": "relations",
+      "query": "retriever::Retriever::new",
+      "kind": "Calls"
+    },
+    {
+      "id": "relation-13",
+      "category": "relation",
+      "primitive": "relations",
+      "query": "auth::AuthService",
+      "kind": "Contains"
+    },
+    {
+      "id": "relation-14",
+      "category": "relation",
+      "primitive": "relations",
+      "query": "auth::Middleware",
+      "kind": "Contains"
+    },
+    {
+      "id": "relation-15",
+      "category": "relation",
+      "primitive": "relations",
+      "query": "retriever::Retriever",
+      "kind": "Contains"
+    },
+    {
+      "id": "context-01",
+      "category": "context",
+      "primitive": "context",
+      "query": "authentication flow"
+    },
+    {
+      "id": "context-02",
+      "category": "context",
+      "primitive": "context",
+      "query": "token validation"
+    },
+    {
+      "id": "context-03",
+      "category": "context",
+      "primitive": "context",
+      "query": "token refresh"
+    },
+    {
+      "id": "context-04",
+      "category": "context",
+      "primitive": "context",
+      "query": "request authorization"
+    },
+    {
+      "id": "context-05",
+      "category": "context",
+      "primitive": "context",
+      "query": "session lifecycle"
+    },
+    {
+      "id": "context-06",
+      "category": "context",
+      "primitive": "context",
+      "query": "jwt parsing"
+    },
+    {
+      "id": "context-07",
+      "category": "context",
+      "primitive": "context",
+      "query": "token configuration"
+    },
+    {
+      "id": "context-08",
+      "category": "context",
+      "primitive": "context",
+      "query": "retrieval ranking"
+    },
+    {
+      "id": "context-09",
+      "category": "context",
+      "primitive": "context",
+      "query": "credential verification"
+    },
+    {
+      "id": "context-10",
+      "category": "context",
+      "primitive": "context",
+      "query": "access token issuance"
+    },
+    {
+      "id": "ambiguity-01",
+      "category": "ambiguity",
+      "primitive": "resolve_all",
+      "query": "Login"
+    },
+    {
+      "id": "ambiguity-02",
+      "category": "ambiguity",
+      "primitive": "resolve_all",
+      "query": "TokenService"
+    },
+    {
+      "id": "ambiguity-03",
+      "category": "ambiguity",
+      "primitive": "resolve_all",
+      "query": "Middleware"
+    },
+    {
+      "id": "ambiguity-04",
+      "category": "ambiguity",
+      "primitive": "resolve_all",
+      "query": "Claims"
+    },
+    {
+      "id": "ambiguity-05",
+      "category": "ambiguity",
+      "primitive": "resolve_all",
+      "query": "Retriever"
+    },
+    {
+      "id": "ambiguity-06",
+      "category": "ambiguity",
+      "primitive": "resolve_all",
+      "query": "Retriever::new"
+    },
+    {
+      "id": "ambiguity-07",
+      "category": "ambiguity",
+      "primitive": "resolve_all",
+      "query": "TestLogin"
+    },
+    {
+      "id": "ambiguity-08",
+      "category": "ambiguity",
+      "primitive": "resolve_all",
+      "query": "MockValidateToken"
+    },
+    {
+      "id": "ambiguity-09",
+      "category": "ambiguity",
+      "primitive": "resolve_all",
+      "query": "Login"
+    },
+    {
+      "id": "ambiguity-10",
+      "category": "ambiguity",
+      "primitive": "resolve_all",
+      "query": "Login"
+    },
+    {
+      "id": "adversarial-01",
+      "category": "adversarial",
+      "primitive": "search",
+      "query": "",
+      "expect": "no_error"
+    },
+    {
+      "id": "adversarial-02",
+      "category": "adversarial",
+      "primitive": "search",
+      "query": "!!!not a symbol!!!",
+      "expect": "results"
+    },
+    {
+      "id": "adversarial-03",
+      "category": "adversarial",
+      "primitive": "search",
+      "query": "'; DROP TABLE symbols;--",
+      "expect": "results"
+    },
+    {
+      "id": "adversarial-04",
+      "category": "adversarial",
+      "primitive": "search",
+      "query": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "expect": "no_error"
+    },
+    {
+      "id": "adversarial-05",
+      "category": "adversarial",
+      "primitive": "search",
+      "query": "\u30e9\u30f3\u30c0\u30e0\u306a\u30af\u30a8\u30ea",
+      "expect": "no_error"
+    },
+    {
+      "id": "adversarial-06",
+      "category": "adversarial",
+      "primitive": "search",
+      "query": "token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token token ",
+      "expect": "no_error"
+    },
+    {
+      "id": "adversarial-07",
+      "category": "adversarial",
+      "primitive": "search",
+      "query": "zzzz_nonexistent_symbol_zzzz",
+      "expect": "results"
+    },
+    {
+      "id": "adversarial-08",
+      "category": "adversarial",
+      "primitive": "search",
+      "query": "auth::AuthService::Login",
+      "expect": "results"
+    },
+    {
+      "id": "adversarial-09",
+      "category": "adversarial",
+      "primitive": "search",
+      "query": "how does authentication work?",
+      "expect": "no_error"
+    },
+    {
+      "id": "adversarial-10",
+      "category": "adversarial",
+      "primitive": "search",
+      "query": "\u0000\u0001\u0002",
+      "expect": "no_error"
+    }
+  ]
+}

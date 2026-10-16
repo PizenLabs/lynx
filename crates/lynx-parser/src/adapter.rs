@@ -93,9 +93,27 @@ fn module_prefix(path: &Path) -> String {
     }
 }
 
-/// Hex blake3 digest of `text`: the deterministic symbol `content_hash`.
-fn hash_text(text: &str) -> String {
-    blake3::hash(text.as_bytes()).to_string()
+/// Hex blake3 digest of `path`, `fqdn`, and `text`: the deterministic symbol
+/// `content_hash`.
+///
+/// All three are folded into the digest so two *distinct* symbols receive
+/// distinct hashes even when they share identical source text:
+/// - the fqdn separates one-line stubs with the same body in different
+///   packages (e.g. `auth::Login` vs `admin::Login`);
+/// - the file path separates symbols whose fqdn is derived from a package name
+///   rather than the path (two Go files in the same package), so identity is
+///   unique per `(file, symbol)`.
+///
+/// Hashing text alone made such symbols collide under the content-hash primary
+/// key and silently drop from the index.
+fn hash_identity(path: &Path, fqdn: &str, text: &str) -> String {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(path.to_string_lossy().as_bytes());
+    hasher.update(&[0]);
+    hasher.update(fqdn.as_bytes());
+    hasher.update(&[0]);
+    hasher.update(text.as_bytes());
+    hasher.finalize().to_string()
 }
 
 /// Trailing identifier segment of an fqdn (`a::b.C.d` -> `d`).
@@ -203,9 +221,11 @@ enum ContainerKey {
     Mod(String),
 }
 
+#[allow(clippy::too_many_arguments)]
 fn push_raw(
     raws: &mut Vec<RawSymbol>,
     requests: &mut Vec<(ContainerKey, usize)>,
+    path: &Path,
     kind: SymbolKind,
     fqdn: String,
     node: Node,
@@ -218,10 +238,10 @@ fn push_raw(
     let index = raws.len();
     raws.push(RawSymbol {
         kind,
-        fqdn,
+        fqdn: fqdn.clone(),
         start_byte: node.start_byte(),
         end_byte: node.end_byte(),
-        hash: hash_text(slice),
+        hash: hash_identity(path, &fqdn, slice),
     });
     if let Some(key) = container {
         requests.push((key, index));
@@ -242,12 +262,13 @@ fn symbol_identities(
     raws: &[RawSymbol],
 ) -> Vec<SymbolIdentity> {
     let mut symbols = Vec::with_capacity(raws.len() + 1);
+    let module_fqdn = module_prefix(file_path);
     symbols.push(SymbolIdentity {
         language,
-        fqdn: module_prefix(file_path),
+        fqdn: module_fqdn.clone(),
         kind: SymbolKind::Module,
         file_path: file_path.to_path_buf(),
-        content_hash: hash_text(source),
+        content_hash: hash_identity(file_path, &module_fqdn, source),
     });
     symbols.extend(raws.iter().map(|raw| SymbolIdentity {
         language,
@@ -572,6 +593,7 @@ fn analyze_rust(tree: &Tree, source: &str, path: &Path) -> Result<RustAnalysis, 
             push_raw(
                 &mut raws,
                 &mut container_requests,
+                path,
                 kind,
                 fqdn,
                 node,
@@ -585,6 +607,7 @@ fn analyze_rust(tree: &Tree, source: &str, path: &Path) -> Result<RustAnalysis, 
             push_raw(
                 &mut raws,
                 &mut container_requests,
+                path,
                 SymbolKind::Struct,
                 format!("{prefix}::{name}"),
                 node,
@@ -598,6 +621,7 @@ fn analyze_rust(tree: &Tree, source: &str, path: &Path) -> Result<RustAnalysis, 
             push_raw(
                 &mut raws,
                 &mut container_requests,
+                path,
                 SymbolKind::Enum,
                 format!("{prefix}::{name}"),
                 node,
@@ -611,6 +635,7 @@ fn analyze_rust(tree: &Tree, source: &str, path: &Path) -> Result<RustAnalysis, 
             push_raw(
                 &mut raws,
                 &mut container_requests,
+                path,
                 SymbolKind::Trait,
                 format!("{prefix}::{name}"),
                 node,
@@ -624,6 +649,7 @@ fn analyze_rust(tree: &Tree, source: &str, path: &Path) -> Result<RustAnalysis, 
             push_raw(
                 &mut raws,
                 &mut container_requests,
+                path,
                 SymbolKind::Module,
                 format!("{prefix}::{name}"),
                 node,
@@ -732,7 +758,7 @@ impl LanguageAdapter for RustAdapter {
         };
         let path = first.file_path.as_path();
         let analysis = analyze_rust(tree, source, path)?;
-        let module_hash = hash_text(source);
+        let module_hash = hash_identity(path, &module_prefix(path), source);
         let contains = resolve_contains(
             &module_prefix(path),
             &analysis.raws,
@@ -819,7 +845,7 @@ struct GoAnalysis {
     calls: Vec<CallSite>,
 }
 
-fn analyze_go(tree: &Tree, source: &str, _path: &Path) -> Result<GoAnalysis, ParseError> {
+fn analyze_go(tree: &Tree, source: &str, path: &Path) -> Result<GoAnalysis, ParseError> {
     let text = source.as_bytes();
     let root = tree.root_node();
     let query = go_symbol_query()?;
@@ -840,6 +866,7 @@ fn analyze_go(tree: &Tree, source: &str, _path: &Path) -> Result<GoAnalysis, Par
             push_raw(
                 &mut raws,
                 &mut container_requests,
+                path,
                 SymbolKind::Function,
                 format!("{package}::{name}"),
                 node,
@@ -862,6 +889,7 @@ fn analyze_go(tree: &Tree, source: &str, _path: &Path) -> Result<GoAnalysis, Par
                     push_raw(
                         &mut raws,
                         &mut container_requests,
+                        path,
                         SymbolKind::Method,
                         format!("{package}::{receiver}::{name}"),
                         node,
@@ -872,6 +900,7 @@ fn analyze_go(tree: &Tree, source: &str, _path: &Path) -> Result<GoAnalysis, Par
                 None => push_raw(
                     &mut raws,
                     &mut container_requests,
+                    path,
                     SymbolKind::Function,
                     format!("{package}::{name}"),
                     node,
@@ -897,6 +926,7 @@ fn analyze_go(tree: &Tree, source: &str, _path: &Path) -> Result<GoAnalysis, Par
             push_raw(
                 &mut raws,
                 &mut container_requests,
+                path,
                 kind,
                 format!("{package}::{name}"),
                 node,
@@ -993,7 +1023,7 @@ impl LanguageAdapter for GoAdapter {
         };
         let path = first.file_path.as_path();
         let analysis = analyze_go(tree, source, path)?;
-        let module_hash = hash_text(source);
+        let module_hash = hash_identity(path, &module_prefix(path), source);
         let implements = go_implements(&analysis, &analysis.raws);
         let calls = resolve_calls(&analysis.raws, &analysis.calls);
         let contains = resolve_contains(
@@ -1163,6 +1193,7 @@ fn analyze_ts_family(
             push_raw(
                 &mut raws,
                 &mut container_requests,
+                path,
                 kind,
                 fqdn,
                 node,
@@ -1176,6 +1207,7 @@ fn analyze_ts_family(
             push_raw(
                 &mut raws,
                 &mut container_requests,
+                path,
                 SymbolKind::Class,
                 format!("{prefix}::{name}"),
                 node,
@@ -1189,6 +1221,7 @@ fn analyze_ts_family(
             push_raw(
                 &mut raws,
                 &mut container_requests,
+                path,
                 SymbolKind::Interface,
                 format!("{prefix}::{name}"),
                 node,
@@ -1220,6 +1253,7 @@ fn analyze_ts_family(
             push_raw(
                 &mut raws,
                 &mut container_requests,
+                path,
                 kind,
                 fqdn,
                 node,
@@ -1315,7 +1349,7 @@ impl LanguageAdapter for TypeScriptAdapter {
         };
         let path = first.file_path.as_path();
         let analysis = analyze_ts_family(TsFamily::TypeScript, tree, source, path)?;
-        let module_hash = hash_text(source);
+        let module_hash = hash_identity(path, &module_prefix(path), source);
         let contains = resolve_contains(
             &module_prefix(path),
             &analysis.raws,
@@ -1378,7 +1412,7 @@ impl LanguageAdapter for JavaScriptAdapter {
         };
         let path = first.file_path.as_path();
         let analysis = analyze_ts_family(TsFamily::JavaScript, tree, source, path)?;
-        let module_hash = hash_text(source);
+        let module_hash = hash_identity(path, &module_prefix(path), source);
         let contains = resolve_contains(
             &module_prefix(path),
             &analysis.raws,
@@ -1497,6 +1531,7 @@ fn analyze_py(tree: &Tree, source: &str, path: &Path) -> Result<PyAnalysis, Pars
             push_raw(
                 &mut raws,
                 &mut container_requests,
+                path,
                 kind,
                 fqdn,
                 node,
@@ -1521,6 +1556,7 @@ fn analyze_py(tree: &Tree, source: &str, path: &Path) -> Result<PyAnalysis, Pars
             push_raw(
                 &mut raws,
                 &mut container_requests,
+                path,
                 SymbolKind::Class,
                 fqdn,
                 node,
@@ -1585,7 +1621,7 @@ impl LanguageAdapter for PythonAdapter {
         };
         let path = first.file_path.as_path();
         let analysis = analyze_py(tree, source, path)?;
-        let module_hash = hash_text(source);
+        let module_hash = hash_identity(path, &module_prefix(path), source);
         let contains = resolve_contains(
             &module_prefix(path),
             &analysis.raws,
@@ -1705,15 +1741,15 @@ impl LanguageAdapter for GenericAdapter {
                     fqdn: format!("{prefix}::{slug}"),
                     kind: SymbolKind::Module,
                     file_path: file_path.to_path_buf(),
-                    content_hash: hash_text(&slice),
+                    content_hash: hash_identity(file_path, &format!("{prefix}::{slug}"), &slice),
                 })
                 .collect(),
             _ => vec![SymbolIdentity {
                 language: self.language(),
-                fqdn: prefix,
+                fqdn: prefix.clone(),
                 kind: SymbolKind::Module,
                 file_path: file_path.to_path_buf(),
-                content_hash: hash_text(source),
+                content_hash: hash_identity(file_path, &prefix, source),
             }],
         };
         Ok(identities)

@@ -23,10 +23,25 @@ start -> execute -> complete | fail | cancel -> release query-local resources
 - There are **no background tasks, threads, or channels** spawned per query. A
   query is a synchronous call; on return (or error) all query-local buffers are
   dropped by the language runtime.
-- Locks (`symbols`, `embeddings`, `resolve_index`, the writer, the SQLite
-  connection) are always released on return, including on the error paths.
+- A query holds the SQLite connection guard only for the duration of each
+  bounded lookup/scan; there is no process-lifetime symbol or vector map to
+  lock. Locks are always released on return, including on the error paths.
 - A query that is cancelled or times out returns `Err` **and** the engine
   remains usable for subsequent queries (see `lifecycle::cancelled_query_releases_and_errors`).
+
+## 2a. Persistence lifecycle
+
+```
+lx index -> persist .lynx -> process exits -> new process -> hydrate -> query
+```
+
+- `Engine::new` **hydrates** an existing substrate: it reads provenance and
+  counts only. It never reads a source file and never recomputes an embedding.
+- Retrieval transports open the persisted `.lynx` index; a query never
+  re-indexes the repository. `lx index` is the only writer.
+- `lx mcp` hydrates at startup and builds the index once only if it is absent.
+- Each `index_repository` pass resets the substrate first, so a rebuild cannot
+  retain stale symbols, vectors, edges, or lexical documents.
 
 ## 3. Cancellation and timeouts
 
@@ -93,17 +108,20 @@ Given `(repository, index, query, configuration)` the logical result is stable:
 
 ## 8. What is explicitly NOT guaranteed (yet)
 
-- **In-process isolation is not claimed.** For adversarial or
+- **Incremental indexing is not implemented.** Every `lx index` performs a full
+  reset-and-rebuild. A hydrated index cannot detect that the workspace changed;
+  consumers may compare `index_status().snapshot` (`commit_hash`, `is_dirty`,
+  `content_hash`) and re-index. (See `production-readiness.md`.)
+- **Indexing has no hard memory ceiling.** Peak RSS is now flat with repository
+  size (memory is dominated by the ~250 MB ONNX model), but an adversarial
+  repository (e.g. one enormous file) can still spike. For adversarial or
   arbitrary-untrusted repositories under hard memory ceilings, run indexing in a
-  subprocess with an OS memory limit. Query-side memory is bounded, but indexing
-  retains `O(symbols)` state in RAM by design.
-- **Persistent index reuse is not implemented.** Retrieval transports
-  (`lx search|resolve|relations|context`, MCP) build an ephemeral index at start
-  and index the workspace once; they do not hydrate from `.lynx`. `lx index`
-  writes `.lynx` but no read path consumes it. This is the largest remaining
-  product gap (see the hardening report).
-- **Conceptual (flow) queries remain weak** relative to definition/exact
-  queries; see the retrieval benchmark.
+  subprocess with an OS memory limit.
+- **Relations are intra-file.** Cross-file call/dependency edges are not linked.
+- **Conceptual (flow) queries and context ordering remain weaker** than
+  definition/exact queries: context Hit@5 0.800 but P@1 0.100.
+- **Very large repositories (500 MB+) and cross-language monorepos are
+  unmeasured.**
 
 ## 9. Reproducible verification
 

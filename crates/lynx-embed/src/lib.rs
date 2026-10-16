@@ -9,6 +9,11 @@
 //! All methods are synchronous and thread-safe: the underlying ONNX model is
 //! guarded by interior mutability so a single provider can be shared across
 //! indexing and query threads.
+//!
+//! [`UnavailableProvider`] is the opposite seam: it satisfies the
+//! [`VectorProvider`] contract while performing no inference, so a
+//! structural/lexical-only session (exact resolution, relations, inspection)
+//! can run without loading the ~250 MB ONNX model.
 
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
@@ -32,4 +37,31 @@ pub trait VectorProvider: Send + Sync {
 
     /// Length of every vector this provider returns.
     fn dimension(&self) -> usize;
+}
+
+/// A [`VectorProvider`] that performs no embedding.
+///
+/// Used for engines that only ever serve structural and lexical primitives
+/// (`resolve`, `inspect`, `relations`, lexical `search`). Any semantic call
+/// fails with [`EmbedError::Unavailable`] instead of silently returning
+/// meaningless vectors, so a misconfigured request is a clear error.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct UnavailableProvider;
+
+impl VectorProvider for UnavailableProvider {
+    fn embed_query(&self, _text: &str) -> Result<Vec<f32>, EmbedError> {
+        Err(EmbedError::Unavailable(
+            "this engine was opened without an embedding provider".to_string(),
+        ))
+    }
+
+    fn embed_batch(&self, _texts: &[&str]) -> Result<Vec<Vec<f32>>, EmbedError> {
+        Err(EmbedError::Unavailable(
+            "this engine was opened without an embedding provider".to_string(),
+        ))
+    }
+
+    fn dimension(&self) -> usize {
+        0
+    }
 }

@@ -15,6 +15,12 @@ pub const RRF_K: f32 = 60.0;
 /// Each list maps a symbol hash to its rank (0 = best). A symbol present in
 /// both lists accumulates contributions from each, favouring items that rank
 /// well across channels.
+///
+/// RRF is symmetric, so `(lex=i, sem=j)` and `(lex=j, sem=i)` score **exactly**
+/// equal. Such ties are resolved deterministically by the lexical rank first
+/// (then semantic rank, then hash): when fusion cannot separate two candidates,
+/// the one matched better by the high-precision exact-term channel is preferred.
+/// This is a total, stable order independent of the arbitrary hash values.
 pub fn rrf_fuse(lexical: &[(String, usize)], semantic: &[(String, usize)]) -> Vec<(String, f32)> {
     let mut scores: HashMap<String, f32> = HashMap::new();
     for (hash, rank) in lexical {
@@ -23,42 +29,131 @@ pub fn rrf_fuse(lexical: &[(String, usize)], semantic: &[(String, usize)]) -> Ve
     for (hash, rank) in semantic {
         *scores.entry(hash.clone()).or_insert(0.0) += 1.0 / (RRF_K + *rank as f32);
     }
+    let lex_of: HashMap<&str, usize> = lexical.iter().map(|(h, r)| (h.as_str(), *r)).collect();
+    let sem_of: HashMap<&str, usize> = semantic.iter().map(|(h, r)| (h.as_str(), *r)).collect();
+    let missing = usize::MAX;
+
     let mut fused: Vec<(String, f32)> = scores.into_iter().collect();
-    // Deterministic: score descending, then hash ascending to break ties.
     fused.sort_by(|a, b| {
         b.1.partial_cmp(&a.1)
             .unwrap_or(Ordering::Equal)
+            .then_with(|| {
+                lex_of
+                    .get(a.0.as_str())
+                    .copied()
+                    .unwrap_or(missing)
+                    .cmp(&lex_of.get(b.0.as_str()).copied().unwrap_or(missing))
+            })
+            .then_with(|| {
+                sem_of
+                    .get(a.0.as_str())
+                    .copied()
+                    .unwrap_or(missing)
+                    .cmp(&sem_of.get(b.0.as_str()).copied().unwrap_or(missing))
+            })
             .then_with(|| a.0.cmp(&b.0))
     });
     fused
 }
 
-/// A score-then-hash key ordered so a `BinaryHeap` keeps the *worst* element on
-/// top (via `Reverse` at the call site): lower score is worse; on equal score
-/// the lexicographically greater hash is worse, giving a stable tie-break.
-struct ScoreKey<'a> {
+/// An owned score-then-hash key ordered so a `BinaryHeap` keeps the *worst*
+/// element on top (via `Reverse` at the call site): lower score is worse; on
+/// equal score the lexicographically greater hash is worse, giving a stable
+/// tie-break. Owned because streaming sources cannot lend a stable `&str`.
+#[derive(Debug, Clone)]
+struct OwnedScoreKey {
     score: f32,
-    hash: &'a str,
+    hash: String,
 }
 
-impl PartialEq for ScoreKey<'_> {
+impl PartialEq for OwnedScoreKey {
     fn eq(&self, other: &Self) -> bool {
         self.score == other.score && self.hash == other.hash
     }
 }
-impl Eq for ScoreKey<'_> {}
-impl PartialOrd for ScoreKey<'_> {
+impl Eq for OwnedScoreKey {}
+impl PartialOrd for OwnedScoreKey {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
     }
 }
-impl Ord for ScoreKey<'_> {
+impl Ord for OwnedScoreKey {
     fn cmp(&self, other: &Self) -> Ordering {
         self.score
             .partial_cmp(&other.score)
             .unwrap_or(Ordering::Equal)
-            // Greater hash sorts as "greater" so `Reverse` treats it as worse.
-            .then_with(|| other.hash.cmp(self.hash))
+            .then_with(|| other.hash.cmp(&self.hash))
+    }
+}
+
+/// A bounded top-`k` collector over a stream of `(hash, score)` items.
+///
+/// Memory is `O(k)`: only the retained hashes are owned, and a candidate whose
+/// score cannot displace the current worst is rejected **before** its hash is
+/// cloned. This is the collector a streaming semantic scan feeds one candidate
+/// at a time, so a query never materializes the whole candidate set.
+///
+/// The retained set is a pure function of the *set* of pushed items (the total
+/// order is `score` then `hash`), so results are independent of stream order.
+pub struct TopK {
+    k: usize,
+    heap: BinaryHeap<std::cmp::Reverse<OwnedScoreKey>>,
+}
+
+impl TopK {
+    /// Creates a collector retaining the `k` highest-scoring items.
+    pub fn new(k: usize) -> Self {
+        Self {
+            k,
+            heap: BinaryHeap::with_capacity(k.saturating_add(1)),
+        }
+    }
+
+    /// Offers one candidate. Non-finite scores are ignored.
+    pub fn push(&mut self, hash: &str, score: f32) {
+        if self.k == 0 || !score.is_finite() {
+            return;
+        }
+        let candidate = OwnedScoreKey {
+            score,
+            hash: hash.to_string(),
+        };
+        if self.heap.len() < self.k {
+            self.heap.push(std::cmp::Reverse(candidate));
+            return;
+        }
+        if let Some(std::cmp::Reverse(worst)) = self.heap.peek() {
+            if candidate > *worst {
+                self.heap.pop();
+                self.heap.push(std::cmp::Reverse(candidate));
+            }
+        }
+    }
+
+    /// Number of retained candidates.
+    pub fn len(&self) -> usize {
+        self.heap.len()
+    }
+
+    /// Whether no candidate is retained.
+    pub fn is_empty(&self) -> bool {
+        self.heap.is_empty()
+    }
+
+    /// Consumes the collector, returning retained items sorted by descending
+    /// score (ties by ascending hash).
+    pub fn into_sorted(self) -> Vec<(String, f32)> {
+        let mut kept: Vec<(String, f32)> = self
+            .heap
+            .into_iter()
+            .map(|std::cmp::Reverse(key)| (key.hash, key.score))
+            .collect();
+        kept.sort_by(|a, b| {
+            b.1.partial_cmp(&a.1)
+                .unwrap_or(Ordering::Equal)
+                .then_with(|| a.0.cmp(&b.0))
+        });
+        kept
     }
 }
 
@@ -67,42 +162,16 @@ impl Ord for ScoreKey<'_> {
 ///
 /// This is the bounded replacement for "collect all candidates, sort, truncate":
 /// per-query memory no longer scales with the number of indexed symbols, only
-/// with `k`. Only the `k` retained hashes are cloned. Ties break on hash for
-/// determinism. Non-finite scores are dropped.
+/// with `k`. Ties break on hash for determinism. Non-finite scores are dropped.
 pub fn top_k_scored<'a, I>(items: I, k: usize) -> Vec<(String, f32)>
 where
     I: Iterator<Item = (&'a str, f32)>,
 {
-    if k == 0 {
-        return Vec::new();
-    }
-    let mut heap: BinaryHeap<std::cmp::Reverse<ScoreKey<'a>>> = BinaryHeap::with_capacity(k + 1);
+    let mut collector = TopK::new(k);
     for (hash, score) in items {
-        if !score.is_finite() {
-            continue;
-        }
-        let key = ScoreKey { score, hash };
-        if heap.len() < k {
-            heap.push(std::cmp::Reverse(key));
-        } else if let Some(std::cmp::Reverse(worst)) = heap.peek() {
-            if key > *worst {
-                heap.pop();
-                heap.push(std::cmp::Reverse(key));
-            }
-        }
+        collector.push(hash, score);
     }
-    let mut kept: Vec<(f32, &str)> = heap
-        .into_iter()
-        .map(|std::cmp::Reverse(key)| (key.score, key.hash))
-        .collect();
-    kept.sort_by(|a, b| {
-        b.0.partial_cmp(&a.0)
-            .unwrap_or(Ordering::Equal)
-            .then_with(|| a.1.cmp(b.1))
-    });
-    kept.into_iter()
-        .map(|(score, hash)| (hash.to_string(), score))
-        .collect()
+    collector.into_sorted()
 }
 
 /// [`top_k_scored`] with ranks instead of scores (`0` = best).
@@ -158,20 +227,40 @@ pub const NOISE_PENALTY_TEST: f32 = 0.5;
 /// Score multiplier applied to symbols located in vendored/third-party paths.
 pub const NOISE_PENALTY_VENDOR: f32 = 0.25;
 
-/// Query classification: a bare symbol reference versus natural language.
+/// Query classification: which retrieval route an intent takes.
 ///
-/// Exact symbol queries are routed through deterministic exact resolution
-/// (Rule: deterministic before probabilistic) instead of ranking.
+/// Symbol and qualified-symbol queries are routed through deterministic exact
+/// resolution first (deterministic before probabilistic); only conceptual
+/// queries depend primarily on ranked retrieval. This keeps `Login`,
+/// `auth.Login`, and `ValidateToken` from becoming embedding searches.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum QueryClass {
-    /// A single identifier/token (`Login`, `auth::service::Login`, `Server.Start`).
+    /// A single bare identifier (`Login`, `ValidateToken`).
     Symbol,
+    /// A qualified path (`auth::service::Login`, `Server.Start`).
+    Qualified,
     /// Anything else: natural language or multi-token intent.
     Natural,
 }
 
-/// Classifies a query. A query is a [`QueryClass::Symbol`] when it is a single
-/// token composed only of symbol characters and containing a letter.
+impl QueryClass {
+    /// Stable lowercase wire name.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            QueryClass::Symbol => "symbol",
+            QueryClass::Qualified => "qualified",
+            QueryClass::Natural => "natural",
+        }
+    }
+
+    /// Whether the class has a deterministic exact-resolution route, so its
+    /// primary answer must not depend on ranking.
+    pub fn is_deterministic(self) -> bool {
+        matches!(self, QueryClass::Symbol | QueryClass::Qualified)
+    }
+}
+
+/// Classifies a query into its retrieval route.
 pub fn classify_query(query: &str) -> QueryClass {
     let trimmed = query.trim();
     if trimmed.is_empty() || trimmed.chars().any(char::is_whitespace) {
@@ -180,10 +269,17 @@ pub fn classify_query(query: &str) -> QueryClass {
     let symbol_chars = trimmed
         .chars()
         .all(|c| c.is_alphanumeric() || matches!(c, '_' | ':' | '.' | '#' | '$'));
-    if symbol_chars && trimmed.chars().any(char::is_alphabetic) {
-        QueryClass::Symbol
+    if !symbol_chars || !trimmed.chars().any(char::is_alphabetic) {
+        return QueryClass::Natural;
+    }
+    if trimmed.contains("::")
+        || trimmed.contains('.')
+        || trimmed.contains('#')
+        || trimmed.contains('$')
+    {
+        QueryClass::Qualified
     } else {
-        QueryClass::Natural
+        QueryClass::Symbol
     }
 }
 
@@ -265,11 +361,13 @@ pub fn finalize_fused(mut evidence: Vec<Evidence>) -> Vec<Evidence> {
             item.score /= max;
         }
     }
+    // Stable sort by score only: equal scores keep the deterministic fused
+    // order established by [`rrf_fuse`] (lexical-rank tie-break), so ranking
+    // never depends on opaque content hashes.
     evidence.sort_by(|a, b| {
         b.score
             .partial_cmp(&a.score)
             .unwrap_or(std::cmp::Ordering::Equal)
-            .then_with(|| a.identity.content_hash.cmp(&b.identity.content_hash))
     });
     for item in evidence.iter_mut() {
         item.retrieval_mode = RetrievalMode::Hybrid;

@@ -17,10 +17,10 @@ pub mod tantivy_store;
 
 use std::path::Path;
 
-use lynx_protocol::SymbolIdentity;
+use lynx_protocol::{SourceRange, SymbolIdentity};
 
 pub use error::StorageError;
-pub use graph_store::GraphStore;
+pub use graph_store::{GraphStore, SCHEMA_VERSION};
 pub use tantivy_store::{LexicalDoc, LexicalHit, TantivyStore};
 
 /// Aggregate handle over the graph and lexical substrates.
@@ -43,7 +43,7 @@ impl DualStorage {
         })
     }
 
-    /// Relational identity, structural graph, and snapshot store.
+    /// Relational identity, structural graph, vectors, and snapshot store.
     pub fn graph(&self) -> &GraphStore {
         &self.graph
     }
@@ -53,9 +53,22 @@ impl DualStorage {
         &self.lexical
     }
 
-    /// Resolves a stored symbol identity by content hash through the graph.
-    pub fn get_symbol_by_hash(&self, hash: &str) -> Result<Option<SymbolIdentity>, StorageError> {
-        self.graph.get_symbol_by_hash(hash)
+    /// Clears both substrates to an empty state (graph tables and lexical docs).
+    ///
+    /// Used before a full re-index so a rebuild retains no stale symbols,
+    /// vectors, edges, or documents.
+    pub fn reset(&self) -> Result<(), StorageError> {
+        self.graph.reset()?;
+        self.lexical.clear()?;
+        Ok(())
+    }
+
+    /// Resolves a stored symbol identity and range by content hash.
+    pub fn get_symbol(
+        &self,
+        hash: &str,
+    ) -> Result<Option<(SymbolIdentity, SourceRange)>, StorageError> {
+        self.graph.get_symbol(hash)
     }
 }
 

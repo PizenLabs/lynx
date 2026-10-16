@@ -147,6 +147,9 @@ pub enum QueryState {
 pub struct QueryReport {
     /// Correlation id.
     pub query_id: String,
+    /// How the query was routed: deterministic symbol lookup versus ranked
+    /// retrieval.
+    pub class: crate::retrieval::QueryClass,
     /// Query state at return.
     pub state: QueryState,
     /// Lexical candidates considered.
@@ -168,6 +171,7 @@ impl QueryReport {
     pub fn start(query_id: String) -> ReportBuilder {
         ReportBuilder {
             query_id,
+            class: crate::retrieval::QueryClass::Natural,
             start: Instant::now(),
             lexical_candidates: 0,
             semantic_candidates: 0,
@@ -182,6 +186,7 @@ impl QueryReport {
 #[derive(Debug)]
 pub struct ReportBuilder {
     query_id: String,
+    class: crate::retrieval::QueryClass,
     start: Instant,
     lexical_candidates: usize,
     semantic_candidates: usize,
@@ -191,6 +196,11 @@ pub struct ReportBuilder {
 }
 
 impl ReportBuilder {
+    /// Records the routed query class.
+    pub fn class(&mut self, class: crate::retrieval::QueryClass) {
+        self.class = class;
+    }
+
     /// Records a stage's elapsed time.
     pub fn stage(&mut self, stage: &'static str, elapsed: Duration) {
         self.stages.push(StageTiming {
@@ -215,6 +225,7 @@ impl ReportBuilder {
         self.results = results;
         QueryReport {
             query_id: self.query_id,
+            class: self.class,
             state,
             lexical_candidates: self.lexical_candidates,
             semantic_candidates: self.semantic_candidates,

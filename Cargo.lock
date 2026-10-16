@@ -2072,10 +2072,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "pizen-lynx-common"
-version = "0.1.4"
-
-[[package]]
 name = "pizen-lynx-core"
 version = "0.1.4"
 dependencies = [
@@ -2084,6 +2080,7 @@ dependencies = [
  "pizen-lynx-parser",
  "pizen-lynx-protocol",
  "pizen-lynx-storage",
+ "rusqlite",
  "serde",
  "serde_json",
  "tempfile",
