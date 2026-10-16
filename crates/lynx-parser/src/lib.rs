@@ -196,4 +196,35 @@ class Service:
         assert_eq!(symbols[0].kind, SymbolKind::Module);
         assert!(relations.is_empty());
     }
+
+    #[test]
+    fn identical_bodies_in_distinct_packages_get_distinct_hashes() {
+        // Regression: hashing only the source text made these collide under the
+        // content-hash primary key, silently dropping one symbol from the index.
+        // The function bodies are byte-identical; only the enclosing package
+        // (hence the fqdn) differs.
+        let parser = Parser::new();
+        let a = parser
+            .parse_symbols(
+                "internal/auth/login.go".as_ref(),
+                "package auth\n\nfunc Login() bool { return true }\n",
+            )
+            .unwrap();
+        let b = parser
+            .parse_symbols(
+                "admin/auth/login.go".as_ref(),
+                "package admin\n\nfunc Login() bool { return true }\n",
+            )
+            .unwrap();
+        let hashes: std::collections::HashSet<_> = a
+            .iter()
+            .chain(b.iter())
+            .map(|s| s.content_hash.clone())
+            .collect();
+        assert_eq!(
+            hashes.len(),
+            a.len() + b.len(),
+            "distinct symbols must not share a content hash"
+        );
+    }
 }

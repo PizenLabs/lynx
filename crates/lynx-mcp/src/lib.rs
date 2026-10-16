@@ -2,13 +2,14 @@
 //! the Model Context Protocol.
 //!
 //! The server speaks JSON-RPC 2.0 newline-delimited frames on stdin/stdout
-//! and exposes exactly seven tools mapping one-to-one onto
+//! and exposes exactly eight tools mapping one-to-one onto
 //! [`pizen_lynx_core::Engine`] primitives:
 //!
 //! | Tool           | Primitive                        |
 //! |----------------|----------------------------------|
 //! | `search`       | [`Engine::search`]               |
 //! | `resolve`      | [`Engine::resolve`]              |
+//! | `resolve_all`  | [`Engine::resolve_all`]          |
 //! | `inspect`      | [`Engine::inspect`]              |
 //! | `relations`    | [`Engine::relations`]            |
 //! | `similar`      | [`Engine::similar`]              |
@@ -17,9 +18,10 @@
 //!
 //! Internal storage surfaces (SQLite, Tantivy) are never exposed.
 //!
-//! Lifecycle: [`run`] opens a [`Session`] (ephemeral substrate indexed once
-//! from the configured workspace), then serves until stdin EOF. All
-//! diagnostics go to stderr; stdout carries only protocol frames.
+//! Lifecycle: [`run`] opens a [`Session`] over the *persistent* index at the
+//! configured workspace (`<workspace>/.lynx`), building it once at startup when
+//! absent, then serves until stdin EOF. Queries never re-index. All diagnostics
+//! go to stderr; stdout carries only protocol frames.
 
 #![forbid(unsafe_code)]
 
@@ -31,7 +33,7 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 
-pub use session::{workspace_root, Session};
+pub use session::{storage_root, workspace_root, Session, STORAGE_DIR};
 
 /// Configuration for [`run`].
 #[derive(Debug, Clone)]
@@ -133,7 +135,7 @@ mod tests {
     }
 
     #[test]
-    fn tools_list_exposes_exactly_the_seven_primitives() {
+    fn tools_list_exposes_exactly_the_eight_primitives() {
         let fixture = fixture_session();
         let response =
             rpc::handle_for_test(&fixture.session, &request(1, "tools/list", "{}")).unwrap();
@@ -147,6 +149,7 @@ mod tests {
             [
                 "search",
                 "resolve",
+                "resolve_all",
                 "inspect",
                 "relations",
                 "similar",
@@ -154,6 +157,24 @@ mod tests {
                 "index_status"
             ]
         );
+    }
+
+    #[test]
+    fn resolve_all_exposes_ambiguity() {
+        let fixture = fixture_session();
+        let response = rpc::handle_for_test(
+            &fixture.session,
+            &request(
+                41,
+                "tools/call",
+                r#"{"name":"resolve_all","arguments":{"name":"Name"}}"#,
+            ),
+        )
+        .unwrap();
+        let matches: Value =
+            serde_json::from_str(result_of(&response)["content"][0]["text"].as_str().unwrap())
+                .unwrap();
+        assert!(!matches.as_array().unwrap().is_empty());
     }
 
     #[test]

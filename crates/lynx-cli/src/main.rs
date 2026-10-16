@@ -1,19 +1,20 @@
 //! `lx`: command-line transport over the Lynx core primitives.
 //!
-//! Retrieval subcommands open an ephemeral session (fresh substrate
-//! indexed once from the resolved workspace) and print protocol results;
-//! `lx index` builds the persistent `.lynx` directory; `lx mcp` launches
-//! the stdio MCP server from [`lynx_mcp`].
+//! `lx index` builds the persistent `.lynx` index for a repository. Retrieval
+//! subcommands (`search`, `resolve`, `relations`, `context`) **hydrate** that
+//! index — they never re-index the repository. `lx mcp` launches the stdio MCP
+//! server from [`lynx_mcp`], which hydrates (or builds once at startup).
 
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand};
 use lynx_core::Engine;
 
 use lynx_core::QueryOptions;
-use lynx_mcp::{workspace_root, ServerConfig};
+use lynx_embed::UnavailableProvider;
+use lynx_mcp::{storage_root, workspace_root, Session};
 use lynx_protocol::{CapabilityLevel, Evidence, RetrievalMode};
 
 #[derive(Parser)]
@@ -29,7 +30,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Index a repository into ./.lynx (persistent artifact)
+    /// Index a repository into <path>/.lynx (persistent artifact)
     Index {
         /// Repository root to index (default: current directory)
         #[arg(default_value = ".")]
@@ -41,7 +42,7 @@ enum Commands {
         #[arg(long)]
         force: bool,
     },
-    /// Hybrid search; prints ranked Evidence lines
+    /// Hybrid search over the persistent index; prints ranked Evidence lines
     Search {
         query: String,
         /// Maximum number of results
@@ -71,9 +72,11 @@ enum Commands {
         #[arg(long, default_value_t = 2048)]
         token_budget: usize,
     },
+    /// Print provenance and population counts of the persistent index
+    Status,
     /// Launch the stdio MCP server
     Mcp {
-        /// Include test, mock, and generated files in the index
+        /// Include test, mock, and generated files in a freshly built index
         #[arg(long)]
         include_tests: bool,
     },
@@ -100,34 +103,31 @@ fn main() -> Result<()> {
             query,
             token_budget,
         } => context(&query, token_budget),
-        Commands::Mcp { include_tests } => lynx_mcp::run(ServerConfig {
+        Commands::Status => status(),
+        Commands::Mcp { include_tests } => lynx_mcp::run(lynx_mcp::ServerConfig {
             workspace_root: workspace_root()?,
             include_tests,
         }),
     }
 }
 
-/// Persistent storage directory for `lx index`.
-const STORAGE_DIR: &str = ".lynx";
-
-fn index(path: &std::path::Path, include_tests: bool, force: bool) -> Result<()> {
-    let storage = PathBuf::from(STORAGE_DIR);
+fn index(path: &Path, include_tests: bool, force: bool) -> Result<()> {
+    let root = path
+        .canonicalize()
+        .with_context(|| format!("resolving {}", path.display()))?;
+    let storage = storage_root(&root);
     if storage.exists() {
         if !force {
-            bail!("{STORAGE_DIR} already exists; pass --force to rebuild it from scratch");
+            bail!(
+                "{} already exists; pass --force to rebuild it from scratch",
+                storage.display()
+            );
         }
         std::fs::remove_dir_all(&storage)
             .with_context(|| format!("removing existing {}", storage.display()))?;
     }
-
-    // Stage the index outside the workspace and only materialize ./.lynx
-    // afterwards: the engine's exclusion list does not skip `.lynx`, so a
-    // storage directory inside the walked tree would index itself.
-    let root = path
-        .canonicalize()
-        .with_context(|| format!("resolving {}", path.display()))?;
-    println!("Indexing {} into {}/", root.display(), STORAGE_DIR);
-    let session = lynx_mcp::Session::open(&root, include_tests)?;
+    println!("Indexing {} into {}/", root.display(), storage.display());
+    let session = Session::build(&root, include_tests)?;
     let status = session.engine().index_status();
     println!(
         "Indexed {} files, {} symbols, {} relations (capability {}).",
@@ -136,13 +136,23 @@ fn index(path: &std::path::Path, include_tests: bool, force: bool) -> Result<()>
         status.relation_count,
         capability_name(status.capability_level),
     );
-    session.persist(&storage)
+    Ok(())
 }
 
-/// Opens an ephemeral retrieval session over the resolved workspace.
-fn open_session() -> Result<lynx_mcp::Session> {
+/// Hydrates the persistent index for the current workspace with the real
+/// embedding model (semantic-capable).
+fn open_session() -> Result<Session> {
     let root = workspace_root()?;
-    lynx_mcp::Session::open(&root, false)
+    Session::hydrate(&root)
+}
+
+/// Hydrates the persistent index without loading the embedding model.
+///
+/// Used by structural primitives (`resolve`, `relations`) that never need
+/// vectors, so their cold start does not pay the ~250 MB ONNX model load.
+fn open_structural_session() -> Result<Session> {
+    let root = workspace_root()?;
+    Session::hydrate_with(&root, Box::new(UnavailableProvider))
 }
 
 fn search(
@@ -219,27 +229,41 @@ fn print_explain(query: &str, outcome: &lynx_core::SearchOutcome) {
 }
 
 fn resolve(name: &str) -> Result<()> {
-    let Some(evidence) = open_session()?.engine().resolve(name)? else {
+    let engine_session = open_structural_session()?;
+    let matches = engine_session.engine().resolve_all(name)?;
+    let Some(primary) = matches.first() else {
         bail!("symbol not found: {name}");
     };
-    let identity = &evidence.identity;
+    let identity = &primary.identity;
     println!("{}", identity.fqdn);
     println!("  kind      {:?}", identity.kind);
     println!("  language  {:?}", identity.language);
     println!("  file      {}", identity.file_path.display());
     println!(
         "  range     lines {}-{}, bytes {}-{}",
-        evidence.range.start_line,
-        evidence.range.end_line,
-        evidence.range.start_byte,
-        evidence.range.end_byte,
+        primary.range.start_line,
+        primary.range.end_line,
+        primary.range.start_byte,
+        primary.range.end_byte,
     );
     println!("  hash      {}", identity.content_hash);
+    if matches.len() > 1 {
+        println!("\n  {} other symbol(s) share this name:", matches.len() - 1);
+        for alternative in &matches[1..] {
+            println!(
+                "    {}  {:?}  {}:{}",
+                alternative.identity.fqdn,
+                alternative.identity.kind,
+                alternative.identity.file_path.display(),
+                alternative.range.start_line,
+            );
+        }
+    }
     Ok(())
 }
 
 fn relations(symbol: &str) -> Result<()> {
-    let session = open_session()?;
+    let session = open_structural_session()?;
     let engine = session.engine();
     let Some(evidence) = engine.resolve(symbol)? else {
         bail!("symbol not found: {symbol}");
@@ -280,8 +304,24 @@ fn context(query: &str, token_budget: usize) -> Result<()> {
     Ok(())
 }
 
-/// Resolves an endpoint hash's fqdn through [`Engine::inspect`]'s
-/// persistent fallback; unknown hashes degrade to a short prefix.
+fn status() -> Result<()> {
+    let session = open_structural_session()?;
+    let status = session.engine().index_status();
+    println!("workspace   {}", session.workspace_root().display());
+    println!("index       {}", session.storage_root().display());
+    println!("files       {}", status.file_count);
+    println!("symbols     {}", status.symbol_count);
+    println!("relations   {}", status.relation_count);
+    println!("capability  {}", capability_name(status.capability_level));
+    if let Some(commit) = &status.snapshot.commit_hash {
+        println!("commit      {commit}");
+    }
+    println!("dirty       {}", status.snapshot.is_dirty);
+    Ok(())
+}
+
+/// Resolves an endpoint hash's fqdn through [`Engine::inspect`]; unknown hashes
+/// degrade to a short prefix.
 fn endpoint_fqdn(engine: &Engine, hash: &str) -> Option<String> {
     engine
         .inspect(hash)

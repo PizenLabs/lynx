@@ -6,7 +6,7 @@
 
 ### Symbol-first repository discovery engine for AI-native developer tooling.
 
-**Lynx transforms developer intent into stable repository coordinates — symbols, files, and structural chunks — enabling downstream reasoning systems like Lea to operate on deterministic code primitives instead of fragile text spans.**
+**Lynx transforms developer intent into stable repository coordinates — symbols, files, and structural chunks — so any downstream consumer (AI agents, IDEs, MCP clients, code review, automation) can operate on deterministic code primitives instead of fragile text spans.**
 
 [![Crates.io](https://img.shields.io/crates/v/pizen-lynx?style=flat-square&color=orange)](https://crates.io/crates/pizen-lynx)
 [![Docs.rs](https://img.shields.io/docsrs/pizen-lynx?style=flat-square&color=blue)](https://docs.rs/pizen-lynx)
@@ -43,7 +43,7 @@
 - **Heuristic Signal Boosting**:
   - *Definition Boost*: Prioritizes symbol definitions over code references (1.5x score multiplier).
   - *Noise Suppression*: Filters and penalizes mock, test, generated, and vendor code automatically.
-- **Integrations**: Supports a minimal stdio **Model Context Protocol (MCP) server** and integrates natively with the **Lea** reasoning layer.
+- **Integrations**: A minimal, consumer-agnostic stdio **Model Context Protocol (MCP)** server exposes every primitive to any MCP client; the CLI covers local use. No PizenLabs-specific concepts are required to consume Lynx.
 
 ---
 
@@ -77,9 +77,11 @@ graph TD
 ## Design Principles
 
 1. **Discovery Only**: Lynx does not perform reasoning, dependency analyses, or calculate impact radius. Its sole job is to answer: *"Where is this concept located?"*
-2. **Speed First**: Cold queries execute in `< 100ms`, while cached or warm queries resolve in `< 10ms`.
+2. **Persistent & Hydrated**: `lx index` writes a persistent `.lynx` index; retrieval **hydrates** it and never re-indexes the repository. Queries are `O(query)`, not `O(repository)`.
 3. **Token Efficiency**: Instead of dumping thousands of raw lines or dozens of files, Lynx provides the minimal, precise coordinates (symbol ranges, file coordinates) needed.
-4. **Deterministic Base**: Bypasses ranking completely for exact symbol lookups (`O(1)` complexity) to guarantee repeatability.
+4. **Deterministic Base**: Bypasses ranking completely for exact symbol lookups (`O(1)` indexed lookup) to guarantee repeatability; shared names are surfaced, not hidden.
+5. **Bounded & Cancellable**: Every query has bounded candidate counts, a deadline, and a cancellation token; malformed input degrades gracefully instead of failing.
+
 
 ---
 
@@ -109,14 +111,15 @@ lx index /path/to/repo --include-tests --force
 ```
 
 ### 2. Conceptual Search
-Fused lexical + semantic retrieval over the workspace, printing ranked evidence:
+Fused lexical + semantic retrieval over the persistent index, printing ranked evidence:
 ```bash
 lx search "jwt validation token"
-lx search "jwt validation token" --mode semantic --limit 5
+lx search "jwt validation token" --mode semantic --limit 5 --explain
 ```
 
 ### 3. Symbol Resolution
-Resolve an exact symbol's identity coordinates bypassing rank fusion:
+Resolve an exact symbol's identity coordinates bypassing rank fusion. When several
+symbols share a trailing name, the alternatives are listed:
 ```bash
 lx resolve Login
 ```
@@ -133,7 +136,14 @@ Emit a token-budgeted `ContextPackage` as JSON:
 lx context "user validation handler" --token-budget 2048
 ```
 
-Retrieval subcommands operate on a session index of the current workspace (git toplevel of the working directory); only `lx index` writes the `.lynx` artifact.
+### 6. Index Status
+Print provenance and population counts of the persistent index:
+```bash
+lx status
+```
+
+Retrieval subcommands **hydrate** the persistent `.lynx` index at the workspace
+root; they never re-index the repository. Only `lx index` writes it.
 
 ---
 
@@ -150,18 +160,21 @@ Or run the standalone binary directly (optional argument: workspace root):
 ```bash
 cargo run -p pizen-lynx-mcp -- /path/to/repo
 ```
-The server indexes its workspace at startup and speaks newline-delimited JSON-RPC 2.0 (`initialize`, `tools/list`, `tools/call`, `ping`).
+The server hydrates the workspace's persistent `.lynx` index at startup (building
+it once if absent) and speaks newline-delimited JSON-RPC 2.0 (`initialize`,
+`tools/list`, `tools/call`, `ping`).
 
 ### Supported MCP Tools
 
 | Tool | Arguments | Primitive |
 |------|-----------|-----------|
-| `search` | `query`, `mode?`, `limit?` | Hybrid RRF search returning ranked Evidence |
+| `search` | `query`, `mode?`, `limit?`, `timeout_ms?` | Hybrid RRF search returning ranked Evidence |
 | `resolve` | `name` | Exact symbol lookup by fqdn or trailing name |
+| `resolve_all` | `name` | Every symbol matching a name (ambiguity surface) |
 | `inspect` | `symbol_hash` | Full evidence for a content hash |
 | `relations` | `symbol_hash`, `kind?` | Structural edges incident to a symbol |
-| `similar` | `symbol_hash` | Embedding-similarity neighbors |
-| `context` | `query`, `token_budget?` | Compiled, budget-bounded ContextPackage |
+| `similar` | `symbol_hash`, `timeout_ms?` | Embedding-similarity neighbors |
+| `context` | `query`, `token_budget?`, `timeout_ms?` | Compiled, budget-bounded ContextPackage |
 | `index_status` | `path?` | Provenance and population counts of the served index |
 
 Example `tools/call` frame:

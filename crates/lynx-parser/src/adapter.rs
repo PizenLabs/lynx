@@ -93,9 +93,19 @@ fn module_prefix(path: &Path) -> String {
     }
 }
 
-/// Hex blake3 digest of `text`: the deterministic symbol `content_hash`.
-fn hash_text(text: &str) -> String {
-    blake3::hash(text.as_bytes()).to_string()
+/// Hex blake3 digest of `fqdn` and `text`: the deterministic symbol
+/// `content_hash`.
+///
+/// The fqdn is folded into the digest so two *distinct* symbols that happen to
+/// share identical source text (e.g. two one-line `Login` stubs in different
+/// files) receive distinct hashes. Hashing text alone made such symbols collide
+/// under the content-hash primary key and silently drop from the index.
+fn hash_identity(fqdn: &str, text: &str) -> String {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(fqdn.as_bytes());
+    hasher.update(&[0]);
+    hasher.update(text.as_bytes());
+    hasher.finalize().to_string()
 }
 
 /// Trailing identifier segment of an fqdn (`a::b.C.d` -> `d`).
@@ -218,10 +228,10 @@ fn push_raw(
     let index = raws.len();
     raws.push(RawSymbol {
         kind,
-        fqdn,
+        fqdn: fqdn.clone(),
         start_byte: node.start_byte(),
         end_byte: node.end_byte(),
-        hash: hash_text(slice),
+        hash: hash_identity(&fqdn, slice),
     });
     if let Some(key) = container {
         requests.push((key, index));
@@ -242,12 +252,13 @@ fn symbol_identities(
     raws: &[RawSymbol],
 ) -> Vec<SymbolIdentity> {
     let mut symbols = Vec::with_capacity(raws.len() + 1);
+    let module_fqdn = module_prefix(file_path);
     symbols.push(SymbolIdentity {
         language,
-        fqdn: module_prefix(file_path),
+        fqdn: module_fqdn.clone(),
         kind: SymbolKind::Module,
         file_path: file_path.to_path_buf(),
-        content_hash: hash_text(source),
+        content_hash: hash_identity(&module_fqdn, source),
     });
     symbols.extend(raws.iter().map(|raw| SymbolIdentity {
         language,
@@ -732,7 +743,7 @@ impl LanguageAdapter for RustAdapter {
         };
         let path = first.file_path.as_path();
         let analysis = analyze_rust(tree, source, path)?;
-        let module_hash = hash_text(source);
+        let module_hash = hash_identity(&module_prefix(path), source);
         let contains = resolve_contains(
             &module_prefix(path),
             &analysis.raws,
@@ -993,7 +1004,7 @@ impl LanguageAdapter for GoAdapter {
         };
         let path = first.file_path.as_path();
         let analysis = analyze_go(tree, source, path)?;
-        let module_hash = hash_text(source);
+        let module_hash = hash_identity(&module_prefix(path), source);
         let implements = go_implements(&analysis, &analysis.raws);
         let calls = resolve_calls(&analysis.raws, &analysis.calls);
         let contains = resolve_contains(
@@ -1315,7 +1326,7 @@ impl LanguageAdapter for TypeScriptAdapter {
         };
         let path = first.file_path.as_path();
         let analysis = analyze_ts_family(TsFamily::TypeScript, tree, source, path)?;
-        let module_hash = hash_text(source);
+        let module_hash = hash_identity(&module_prefix(path), source);
         let contains = resolve_contains(
             &module_prefix(path),
             &analysis.raws,
@@ -1378,7 +1389,7 @@ impl LanguageAdapter for JavaScriptAdapter {
         };
         let path = first.file_path.as_path();
         let analysis = analyze_ts_family(TsFamily::JavaScript, tree, source, path)?;
-        let module_hash = hash_text(source);
+        let module_hash = hash_identity(&module_prefix(path), source);
         let contains = resolve_contains(
             &module_prefix(path),
             &analysis.raws,
@@ -1585,7 +1596,7 @@ impl LanguageAdapter for PythonAdapter {
         };
         let path = first.file_path.as_path();
         let analysis = analyze_py(tree, source, path)?;
-        let module_hash = hash_text(source);
+        let module_hash = hash_identity(&module_prefix(path), source);
         let contains = resolve_contains(
             &module_prefix(path),
             &analysis.raws,
@@ -1705,15 +1716,15 @@ impl LanguageAdapter for GenericAdapter {
                     fqdn: format!("{prefix}::{slug}"),
                     kind: SymbolKind::Module,
                     file_path: file_path.to_path_buf(),
-                    content_hash: hash_text(&slice),
+                    content_hash: hash_identity(&format!("{prefix}::{slug}"), &slice),
                 })
                 .collect(),
             _ => vec![SymbolIdentity {
                 language: self.language(),
-                fqdn: prefix,
+                fqdn: prefix.clone(),
                 kind: SymbolKind::Module,
                 file_path: file_path.to_path_buf(),
-                content_hash: hash_text(source),
+                content_hash: hash_identity(&prefix, source),
             }],
         };
         Ok(identities)

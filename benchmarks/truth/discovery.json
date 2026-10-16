@@ -1,0 +1,824 @@
+{
+  "truth": {
+    "exact-01": {
+      "primary": "auth::ParseJWT",
+      "expected": [
+        "auth::ParseJWT"
+      ]
+    },
+    "exact-02": {
+      "primary": "auth::SignJWT",
+      "expected": [
+        "auth::SignJWT"
+      ]
+    },
+    "exact-03": {
+      "primary": "auth::ValidateToken",
+      "expected": [
+        "auth::ValidateToken"
+      ]
+    },
+    "exact-04": {
+      "primary": "auth::AuthService::RefreshToken",
+      "expected": [
+        "auth::AuthService::RefreshToken"
+      ]
+    },
+    "exact-05": {
+      "primary": "auth::AuthService::issueToken",
+      "expected": [
+        "auth::AuthService::issueToken"
+      ]
+    },
+    "exact-06": {
+      "primary": "auth::AuthService::verifyPassword",
+      "expected": [
+        "auth::AuthService::verifyPassword"
+      ]
+    },
+    "exact-07": {
+      "primary": "auth::Middleware::Authenticate",
+      "expected": [
+        "auth::Middleware::Authenticate"
+      ]
+    },
+    "exact-08": {
+      "primary": "auth::Middleware::Authorize",
+      "expected": [
+        "auth::Middleware::Authorize"
+      ]
+    },
+    "exact-09": {
+      "primary": "auth::bearerToken",
+      "expected": [
+        "auth::bearerToken"
+      ]
+    },
+    "exact-10": {
+      "primary": "auth::EstablishSession",
+      "expected": [
+        "auth::EstablishSession"
+      ]
+    },
+    "exact-11": {
+      "primary": "auth::NewMiddleware",
+      "expected": [
+        "auth::NewMiddleware"
+      ]
+    },
+    "exact-12": {
+      "primary": "auth::Claims::Expired",
+      "expected": [
+        "auth::Claims::Expired"
+      ]
+    },
+    "exact-13": {
+      "primary": "auth::AdminService::RevokeSession",
+      "expected": [
+        "auth::AdminService::RevokeSession"
+      ]
+    },
+    "exact-14": {
+      "primary": "config::TokenConfig::ExpirationSeconds",
+      "expected": [
+        "config::TokenConfig::ExpirationSeconds"
+      ]
+    },
+    "exact-15": {
+      "primary": "config::DefaultTokenConfig",
+      "expected": [
+        "config::DefaultTokenConfig"
+      ]
+    },
+    "exact-16": {
+      "primary": "service::token::TokenService.validate_token",
+      "expected": [
+        "service::token::TokenService.validate_token"
+      ]
+    },
+    "exact-17": {
+      "primary": "service::token::TokenService.refresh_token",
+      "expected": [
+        "service::token::TokenService.refresh_token"
+      ]
+    },
+    "exact-18": {
+      "primary": "service::token::TokenService.is_expired",
+      "expected": [
+        "service::token::TokenService.is_expired"
+      ]
+    },
+    "exact-19": {
+      "primary": "service::token::TokenService.issue",
+      "expected": [
+        "service::token::TokenService.issue"
+      ]
+    },
+    "exact-20": {
+      "primary": "web::src::session::createSession",
+      "expected": [
+        "web::src::session::createSession"
+      ]
+    },
+    "exact-21": {
+      "primary": "web::src::session::transitionToAuthenticated",
+      "expected": [
+        "web::src::session::transitionToAuthenticated"
+      ]
+    },
+    "exact-22": {
+      "primary": "web::src::session::logout",
+      "expected": [
+        "web::src::session::logout"
+      ]
+    },
+    "exact-23": {
+      "primary": "retriever::Retriever::rank",
+      "expected": [
+        "retriever::Retriever::rank"
+      ]
+    },
+    "exact-24": {
+      "primary": "retriever::Candidate",
+      "expected": [
+        "retriever::Candidate"
+      ]
+    },
+    "exact-25": {
+      "primary": "retriever::Retriever",
+      "expected": [
+        "retriever::Retriever"
+      ]
+    },
+    "exact-26": {
+      "primary": "config::TokenConfig",
+      "expected": [
+        "config::TokenConfig"
+      ]
+    },
+    "exact-27": {
+      "primary": "auth::AdminService",
+      "expected": [
+        "auth::AdminService"
+      ]
+    },
+    "exact-28": {
+      "primary": "auth::Middleware",
+      "expected": [
+        "auth::Middleware"
+      ]
+    },
+    "exact-29": {
+      "primary": "service::token::TokenService",
+      "expected": [
+        "service::token::TokenService"
+      ]
+    },
+    "exact-30": {
+      "primary": "auth::Claims",
+      "expected": [
+        "auth::Claims"
+      ]
+    },
+    "exact-31": {
+      "primary": "auth::AuthService",
+      "expected": [
+        "auth::AuthService"
+      ]
+    },
+    "exact-32": {
+      "primary": "auth::ValidateToken",
+      "expected": [
+        "auth::ValidateToken"
+      ]
+    },
+    "exact-33": {
+      "primary": "service::token::TokenService.validate_token",
+      "expected": [
+        "service::token::TokenService.validate_token"
+      ]
+    },
+    "exact-34": {
+      "primary": "auth::AuthService::Login",
+      "expected": [
+        "auth::AuthService::Login"
+      ]
+    },
+    "exact-35": {
+      "primary": "config::TokenConfig::ExpirationSeconds",
+      "expected": [
+        "config::TokenConfig::ExpirationSeconds"
+      ]
+    },
+    "lexical-01": {
+      "primary": "auth::ParseJWT",
+      "expected": [
+        "auth::ParseJWT",
+        "auth::SignJWT"
+      ]
+    },
+    "lexical-02": {
+      "primary": "auth::SignJWT",
+      "expected": [
+        "auth::SignJWT"
+      ]
+    },
+    "lexical-03": {
+      "primary": "auth::AuthService::verifyPassword",
+      "expected": [
+        "auth::AuthService::verifyPassword"
+      ]
+    },
+    "lexical-04": {
+      "primary": "auth::AuthService::verifyPassword",
+      "expected": [
+        "auth::AuthService::verifyPassword"
+      ]
+    },
+    "lexical-05": {
+      "primary": "auth::bearerToken",
+      "expected": [
+        "auth::bearerToken",
+        "auth::Middleware::Authenticate"
+      ]
+    },
+    "lexical-06": {
+      "primary": "web::src::session::createSession",
+      "expected": [
+        "web::src::session::createSession"
+      ]
+    },
+    "lexical-07": {
+      "primary": "web::src::session::logout",
+      "expected": [
+        "web::src::session::logout"
+      ]
+    },
+    "lexical-08": {
+      "primary": "auth::Claims::Expired",
+      "expected": [
+        "auth::Claims::Expired",
+        "service::token::TokenService.is_expired"
+      ]
+    },
+    "lexical-09": {
+      "primary": "auth::AuthService::RefreshToken",
+      "expected": [
+        "auth::AuthService::RefreshToken",
+        "service::token::TokenService.refresh_token"
+      ]
+    },
+    "lexical-10": {
+      "primary": "auth::AuthService::issueToken",
+      "expected": [
+        "auth::AuthService::issueToken",
+        "service::token::TokenService.issue"
+      ]
+    },
+    "lexical-11": {
+      "primary": "retriever::Retriever::rank",
+      "expected": [
+        "retriever::Retriever::rank"
+      ]
+    },
+    "lexical-12": {
+      "primary": "retriever::Retriever",
+      "expected": [
+        "retriever::Retriever",
+        "retriever::Candidate"
+      ]
+    },
+    "lexical-13": {
+      "primary": "config::TokenConfig",
+      "expected": [
+        "config::TokenConfig",
+        "config::DefaultTokenConfig",
+        "config::TokenConfig::ExpirationSeconds"
+      ]
+    },
+    "lexical-14": {
+      "primary": "auth::AdminService::RevokeSession",
+      "expected": [
+        "auth::AdminService::RevokeSession"
+      ]
+    },
+    "lexical-15": {
+      "primary": "auth::Middleware::Authorize",
+      "expected": [
+        "auth::Middleware::Authorize"
+      ]
+    },
+    "lexical-16": {
+      "primary": "auth::Middleware::Authenticate",
+      "expected": [
+        "auth::Middleware::Authenticate"
+      ]
+    },
+    "lexical-17": {
+      "primary": "auth::Claims::Expired",
+      "expected": [
+        "auth::Claims::Expired"
+      ]
+    },
+    "lexical-18": {
+      "primary": "retriever::Candidate",
+      "expected": [
+        "retriever::Candidate"
+      ]
+    },
+    "lexical-19": {
+      "primary": "auth::EstablishSession",
+      "expected": [
+        "auth::EstablishSession"
+      ]
+    },
+    "lexical-20": {
+      "primary": "auth::bearerToken",
+      "expected": [
+        "auth::bearerToken",
+        "auth::NewMiddleware"
+      ]
+    },
+    "semantic-01": {
+      "primary": "auth::AuthService::Login",
+      "expected": [
+        "auth::AuthService::Login",
+        "auth::AuthService::verifyPassword"
+      ]
+    },
+    "semantic-02": {
+      "primary": "auth::Claims::Expired",
+      "expected": [
+        "auth::Claims::Expired",
+        "service::token::TokenService.is_expired"
+      ]
+    },
+    "semantic-03": {
+      "primary": "auth::SignJWT",
+      "expected": [
+        "auth::SignJWT",
+        "auth::AuthService::issueToken"
+      ]
+    },
+    "semantic-04": {
+      "primary": "auth::AuthService::RefreshToken",
+      "expected": [
+        "auth::AuthService::RefreshToken",
+        "service::token::TokenService.refresh_token"
+      ]
+    },
+    "semantic-05": {
+      "primary": "auth::bearerToken",
+      "expected": [
+        "auth::bearerToken"
+      ]
+    },
+    "semantic-06": {
+      "primary": "web::src::session::transitionToAuthenticated",
+      "expected": [
+        "web::src::session::transitionToAuthenticated"
+      ]
+    },
+    "semantic-07": {
+      "primary": "web::src::session::logout",
+      "expected": [
+        "web::src::session::logout"
+      ]
+    },
+    "semantic-08": {
+      "primary": "config::TokenConfig::ExpirationSeconds",
+      "expected": [
+        "config::TokenConfig::ExpirationSeconds",
+        "config::TokenConfig"
+      ]
+    },
+    "semantic-09": {
+      "primary": "auth::Middleware::Authenticate",
+      "expected": [
+        "auth::Middleware::Authenticate",
+        "auth::Middleware::Authorize"
+      ]
+    },
+    "semantic-10": {
+      "primary": "auth::ParseJWT",
+      "expected": [
+        "auth::ParseJWT"
+      ]
+    },
+    "semantic-11": {
+      "primary": "auth::EstablishSession",
+      "expected": [
+        "auth::EstablishSession"
+      ]
+    },
+    "semantic-12": {
+      "primary": "retriever::Retriever::rank",
+      "expected": [
+        "retriever::Retriever::rank"
+      ]
+    },
+    "semantic-13": {
+      "primary": "web::src::session::createSession",
+      "expected": [
+        "web::src::session::createSession"
+      ]
+    },
+    "semantic-14": {
+      "primary": "auth::AdminService::Login",
+      "expected": [
+        "auth::AdminService::Login"
+      ]
+    },
+    "semantic-15": {
+      "primary": "auth::AdminService::RevokeSession",
+      "expected": [
+        "auth::AdminService::RevokeSession"
+      ]
+    },
+    "semantic-16": {
+      "primary": "config::DefaultTokenConfig",
+      "expected": [
+        "config::DefaultTokenConfig"
+      ]
+    },
+    "semantic-17": {
+      "primary": "auth::ValidateToken",
+      "expected": [
+        "auth::ValidateToken"
+      ]
+    },
+    "semantic-18": {
+      "primary": "auth::NewMiddleware",
+      "expected": [
+        "auth::NewMiddleware"
+      ]
+    },
+    "semantic-19": {
+      "primary": "auth::AuthService::issueToken",
+      "expected": [
+        "auth::AuthService::issueToken",
+        "service::token::TokenService.issue"
+      ]
+    },
+    "semantic-20": {
+      "primary": "auth::ValidateToken",
+      "expected": [
+        "auth::ValidateToken",
+        "auth::Claims::Expired"
+      ]
+    },
+    "structural-01": {
+      "primary": "auth::Middleware::Authenticate",
+      "expected": [
+        "auth::Middleware::Authenticate"
+      ]
+    },
+    "structural-02": {
+      "primary": "auth::AuthService::RefreshToken",
+      "expected": [
+        "auth::AuthService::RefreshToken"
+      ]
+    },
+    "structural-03": {
+      "primary": "service::token::TokenService",
+      "expected": [
+        "service::token::TokenService"
+      ]
+    },
+    "structural-04": {
+      "primary": "retriever::Retriever::rank",
+      "expected": [
+        "retriever::Retriever::rank"
+      ]
+    },
+    "structural-05": {
+      "primary": "config::TokenConfig::ExpirationSeconds",
+      "expected": [
+        "config::TokenConfig::ExpirationSeconds"
+      ]
+    },
+    "structural-06": {
+      "primary": "auth::AdminService",
+      "expected": [
+        "auth::AdminService"
+      ]
+    },
+    "structural-07": {
+      "primary": "web::src::session",
+      "expected": [
+        "web::src::session"
+      ]
+    },
+    "structural-08": {
+      "primary": "internal::auth::middleware",
+      "expected": [
+        "internal::auth::middleware"
+      ]
+    },
+    "structural-09": {
+      "primary": "auth::Claims::Expired",
+      "expected": [
+        "auth::Claims::Expired"
+      ]
+    },
+    "structural-10": {
+      "primary": "auth::ValidateToken",
+      "expected": [
+        "auth::ValidateToken"
+      ]
+    },
+    "structural-11": {
+      "primary": "auth::EstablishSession",
+      "expected": [
+        "auth::EstablishSession"
+      ]
+    },
+    "structural-12": {
+      "primary": "service::token::TokenService.validate_token",
+      "expected": [
+        "service::token::TokenService.validate_token"
+      ]
+    },
+    "structural-13": {
+      "primary": "retriever::Candidate",
+      "expected": [
+        "retriever::Candidate"
+      ]
+    },
+    "structural-14": {
+      "primary": "auth::Middleware",
+      "expected": [
+        "auth::Middleware"
+      ]
+    },
+    "structural-15": {
+      "primary": "config::DefaultTokenConfig",
+      "expected": [
+        "config::DefaultTokenConfig"
+      ]
+    },
+    "relation-01": {
+      "primary": "auth::AuthService::issueToken",
+      "expected": [
+        "auth::AuthService::issueToken",
+        "auth::AuthService::verifyPassword"
+      ]
+    },
+    "relation-02": {
+      "primary": "auth::AuthService::issueToken",
+      "expected": [
+        "auth::AuthService::issueToken"
+      ]
+    },
+    "relation-03": {
+      "primary": "auth::bearerToken",
+      "expected": [
+        "auth::bearerToken"
+      ]
+    },
+    "relation-04": {
+      "primary": "service::token::TokenService.is_expired",
+      "expected": [
+        "service::token::TokenService.is_expired"
+      ]
+    },
+    "relation-05": {
+      "primary": "service::token::TokenService.issue",
+      "expected": [
+        "service::token::TokenService.issue"
+      ]
+    },
+    "relation-06": {
+      "primary": "retriever::Retriever::new",
+      "expected": [
+        "retriever::Retriever::new"
+      ]
+    },
+    "relation-07": {
+      "primary": "auth::AuthService::Login",
+      "expected": [
+        "auth::AuthService::Login",
+        "auth::AuthService::RefreshToken"
+      ]
+    },
+    "relation-08": {
+      "primary": "auth::AuthService::Login",
+      "expected": [
+        "auth::AuthService::Login"
+      ]
+    },
+    "relation-09": {
+      "primary": "auth::Middleware::Authenticate",
+      "expected": [
+        "auth::Middleware::Authenticate"
+      ]
+    },
+    "relation-10": {
+      "primary": "service::token::TokenService.validate_token",
+      "expected": [
+        "service::token::TokenService.validate_token"
+      ]
+    },
+    "relation-11": {
+      "primary": "service::token::TokenService.refresh_token",
+      "expected": [
+        "service::token::TokenService.refresh_token"
+      ]
+    },
+    "relation-12": {
+      "primary": "retriever::Retriever::rank",
+      "expected": [
+        "retriever::Retriever::rank"
+      ]
+    },
+    "relation-13": {
+      "primary": "auth::AuthService::Login",
+      "expected": [
+        "auth::AuthService::Login",
+        "auth::AuthService::RefreshToken",
+        "auth::AuthService::issueToken",
+        "auth::AuthService::verifyPassword"
+      ]
+    },
+    "relation-14": {
+      "primary": "auth::Middleware::Authenticate",
+      "expected": [
+        "auth::Middleware::Authenticate",
+        "auth::Middleware::Authorize"
+      ]
+    },
+    "relation-15": {
+      "primary": "retriever::Retriever::new",
+      "expected": [
+        "retriever::Retriever::new",
+        "retriever::Retriever::rank"
+      ]
+    },
+    "context-01": {
+      "primary": "auth::AuthService::Login",
+      "expected": [
+        "auth::AuthService::Login",
+        "auth::Middleware::Authenticate"
+      ]
+    },
+    "context-02": {
+      "primary": "auth::ValidateToken",
+      "expected": [
+        "auth::ValidateToken",
+        "service::token::TokenService.validate_token"
+      ]
+    },
+    "context-03": {
+      "primary": "auth::AuthService::RefreshToken",
+      "expected": [
+        "auth::AuthService::RefreshToken",
+        "service::token::TokenService.refresh_token"
+      ]
+    },
+    "context-04": {
+      "primary": "auth::Middleware::Authorize",
+      "expected": [
+        "auth::Middleware::Authorize"
+      ]
+    },
+    "context-05": {
+      "primary": "web::src::session::transitionToAuthenticated",
+      "expected": [
+        "web::src::session::transitionToAuthenticated",
+        "web::src::session::logout"
+      ]
+    },
+    "context-06": {
+      "primary": "auth::ParseJWT",
+      "expected": [
+        "auth::ParseJWT"
+      ]
+    },
+    "context-07": {
+      "primary": "config::TokenConfig",
+      "expected": [
+        "config::TokenConfig"
+      ]
+    },
+    "context-08": {
+      "primary": "retriever::Retriever::rank",
+      "expected": [
+        "retriever::Retriever::rank"
+      ]
+    },
+    "context-09": {
+      "primary": "auth::AuthService::verifyPassword",
+      "expected": [
+        "auth::AuthService::verifyPassword"
+      ]
+    },
+    "context-10": {
+      "primary": "auth::AuthService::issueToken",
+      "expected": [
+        "auth::AuthService::issueToken"
+      ]
+    },
+    "ambiguity-01": {
+      "primary": "auth::AdminService::Login",
+      "expected": [
+        "auth::AdminService::Login",
+        "auth::AuthService::Login",
+        "web::src::login::Login"
+      ]
+    },
+    "ambiguity-02": {
+      "primary": "service::token::TokenService",
+      "expected": [
+        "service::token::TokenService"
+      ]
+    },
+    "ambiguity-03": {
+      "primary": "auth::Middleware",
+      "expected": [
+        "auth::Middleware"
+      ]
+    },
+    "ambiguity-04": {
+      "primary": "auth::Claims",
+      "expected": [
+        "auth::Claims"
+      ]
+    },
+    "ambiguity-05": {
+      "primary": "retriever::Retriever",
+      "expected": [
+        "retriever::Retriever"
+      ]
+    },
+    "ambiguity-06": {
+      "primary": "retriever::Retriever::new",
+      "expected": [
+        "retriever::Retriever::new"
+      ]
+    },
+    "ambiguity-07": {
+      "primary": "auth::TestLogin",
+      "expected": [
+        "auth::TestLogin"
+      ]
+    },
+    "ambiguity-08": {
+      "primary": "auth::MockValidateToken",
+      "expected": [
+        "auth::MockValidateToken"
+      ]
+    },
+    "ambiguity-09": {
+      "primary": "auth::AuthService::Login",
+      "expected": [
+        "auth::AuthService::Login"
+      ]
+    },
+    "ambiguity-10": {
+      "primary": "web::src::login::Login",
+      "expected": [
+        "web::src::login::Login"
+      ]
+    },
+    "adversarial-01": {
+      "primary": "",
+      "expected": []
+    },
+    "adversarial-02": {
+      "primary": "",
+      "expected": []
+    },
+    "adversarial-03": {
+      "primary": "",
+      "expected": []
+    },
+    "adversarial-04": {
+      "primary": "",
+      "expected": []
+    },
+    "adversarial-05": {
+      "primary": "",
+      "expected": []
+    },
+    "adversarial-06": {
+      "primary": "",
+      "expected": []
+    },
+    "adversarial-07": {
+      "primary": "",
+      "expected": []
+    },
+    "adversarial-08": {
+      "primary": "",
+      "expected": []
+    },
+    "adversarial-09": {
+      "primary": "",
+      "expected": []
+    },
+    "adversarial-10": {
+      "primary": "",
+      "expected": []
+    }
+  }
+}

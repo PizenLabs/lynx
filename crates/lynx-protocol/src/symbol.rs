@@ -77,6 +77,17 @@ impl SymbolIdentity {
             content_hash: content_hash.into(),
         })
     }
+
+    /// Trailing identifier segment of [`Self::fqdn`], the last `::`- or
+    /// `.`-delimited component (`a::b.C` -> `C`).
+    ///
+    /// This is the addressable short name consumers type: `resolve("C")`.
+    pub fn trailing_name(&self) -> &str {
+        match self.fqdn.rfind([':', '.']) {
+            Some(index) => &self.fqdn[index + 1..],
+            None => &self.fqdn,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -102,6 +113,14 @@ mod tests {
         assert!(set.insert(identity("auth::service::AuthService::validate")?));
         assert!(!set.insert(identity("auth::service::AuthService::validate")?));
         assert_eq!(set.len(), 1);
+        Ok(())
+    }
+
+    #[test]
+    fn trailing_name_is_last_component() -> Result<(), ProtocolError> {
+        assert_eq!(identity("a::b.C")?.trailing_name(), "C");
+        assert_eq!(identity("service::Service.run")?.trailing_name(), "run");
+        assert_eq!(identity("top")?.trailing_name(), "top");
         Ok(())
     }
 

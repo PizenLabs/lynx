@@ -1,4 +1,23 @@
-//! The core [`Engine`]: indexing pipeline and the eight retrieval primitives.
+//! The core [`Engine`]: the indexing pipeline and the retrieval primitives.
+//!
+//! # Persistence model
+//!
+//! `Engine` is a **thin query layer over the persisted substrate**, not a
+//! container of repository state. [`Engine::index_repository`] streams the
+//! repository into [`DualStorage`] (SQLite for identities/relations/vectors,
+//! Tantivy for snippets) one file at a time, holding `O(file)` memory. Every
+//! retrieval primitive then answers from storage:
+//!
+//! - exact resolution is a bounded SQL lookup (deterministic tie-break);
+//! - lexical search is a Tantivy query over a bounded candidate set;
+//! - semantic search streams vectors from SQLite through a bounded top-k
+//!   collector (`O(k)` memory);
+//! - `Evidence` is materialized only for the retained results, and snippets are
+//!   fetched from Tantivy for exactly those results.
+//!
+//! Consequently `Engine::new` on an existing storage root **hydrates** it: no
+//! repository state is rebuilt, no file is read, and no embedding is recomputed.
+//! A query never re-indexes the repository.
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
@@ -18,8 +37,8 @@ use crate::compiler::ContextCompiler;
 use crate::error::CoreError;
 use crate::query::{next_query_id, QueryOptions, QueryReport, QueryState};
 use crate::retrieval::{
-    apply_definition_boost, apply_noise_penalty, classify_query, cosine_similarity, finalize_fused,
-    rrf_fuse, top_k_ranked, top_k_scored, QueryClass,
+    apply_definition_boost, apply_noise_penalty, classify_path, classify_query, cosine_similarity,
+    finalize_fused, rank_contributions, rrf_fuse, PathNoise, QueryClass, TopK,
 };
 
 /// Maximum number of source lines captured as a per-symbol snippet.
@@ -52,6 +71,9 @@ const CANDIDATE_CEILING: usize = 2000;
 /// Absolute upper bound a caller may raise the candidate cap to. Guarantees no
 /// caller can turn `search` back into an unbounded operation.
 const CANDIDATE_HARD_MAX: usize = 100_000;
+
+/// Metadata key holding the highest capability level of the indexed workspace.
+const CAPABILITY_META: &str = "capability";
 
 /// Resolves the bounded per-channel candidate count for a requested `limit`.
 fn candidate_limit(limit: usize) -> usize {
@@ -106,85 +128,6 @@ const EXCLUDED_SEGMENTS: &[&str] = &[
     "dist",
 ];
 
-/// A symbol retained in memory so the engine can reconstruct [`Evidence`]
-/// (the storage substrate stores identity + range but not the raw snippet).
-#[derive(Debug, Clone)]
-pub struct StoredSymbol {
-    /// Frozen identity of the symbol.
-    pub identity: SymbolIdentity,
-    /// Byte/line range of the retained excerpt.
-    pub range: SourceRange,
-    /// Verbatim source excerpt.
-    pub code_snippet: String,
-}
-
-impl StoredSymbol {
-    /// Projects this stored symbol into an [`Evidence`] item.
-    pub fn to_evidence(&self, snapshot: &Snapshot, score: f32, mode: RetrievalMode) -> Evidence {
-        Evidence {
-            identity: self.identity.clone(),
-            snapshot: snapshot.clone(),
-            range: self.range.clone(),
-            code_snippet: self.code_snippet.clone(),
-            score,
-            retrieval_mode: mode,
-        }
-    }
-}
-
-/// Deterministic exact-resolution index: maps fqdn and trailing name to the
-/// symbol's content hash in `O(1)`.
-///
-/// A trailing name may be shared by several fqdns; the winner is the
-/// lexicographically smallest fqdn (then hash), so resolution is deterministic
-/// across runs and independent of `HashMap` iteration order.
-#[derive(Debug, Default, Clone)]
-struct ResolveIndex {
-    by_fqdn: HashMap<String, String>,
-    by_name: HashMap<String, NameWinner>,
-}
-
-/// The deterministically selected winner for a shared trailing name.
-#[derive(Debug, Clone)]
-struct NameWinner {
-    fqdn: String,
-    content_hash: String,
-}
-
-impl ResolveIndex {
-    /// Inserts one symbol, keeping the deterministic winner per trailing name.
-    fn insert(&mut self, identity: &SymbolIdentity) {
-        self.by_fqdn
-            .entry(identity.fqdn.clone())
-            .or_insert_with(|| identity.content_hash.clone());
-        let name = trailing_segment(&identity.fqdn).to_string();
-        match self.by_name.get(&name) {
-            Some(existing)
-                if (existing.fqdn.as_str(), existing.content_hash.as_str())
-                    <= (identity.fqdn.as_str(), identity.content_hash.as_str()) => {}
-            _ => {
-                self.by_name.insert(
-                    name,
-                    NameWinner {
-                        fqdn: identity.fqdn.clone(),
-                        content_hash: identity.content_hash.clone(),
-                    },
-                );
-            }
-        }
-    }
-
-    /// Resolves an exact fqdn or a trailing name to a content hash.
-    fn lookup(&self, needle: &str) -> Option<&str> {
-        if let Some(hash) = self.by_fqdn.get(needle) {
-            return Some(hash.as_str());
-        }
-        self.by_name
-            .get(needle)
-            .map(|winner| winner.content_hash.as_str())
-    }
-}
-
 /// Summary of the current index state.
 #[derive(Debug, Clone)]
 pub struct IndexStatus {
@@ -200,66 +143,93 @@ pub struct IndexStatus {
     pub capability_level: CapabilityLevel,
 }
 
-/// The core engine: combines a [`DualStorage`] substrate, a [`Parser`], a
-/// [`VectorProvider`], and an active workspace [`Snapshot`].
+impl IndexStatus {
+    fn empty() -> Self {
+        Self {
+            snapshot: empty_snapshot(),
+            file_count: 0,
+            symbol_count: 0,
+            relation_count: 0,
+            capability_level: CapabilityLevel::L0Text,
+        }
+    }
+}
+
+/// The core engine: a query layer over [`DualStorage`], a [`Parser`], and a
+/// [`VectorProvider`].
 pub struct Engine {
     dual: DualStorage,
     parser: Parser,
     provider: Box<dyn VectorProvider>,
     snapshot: Mutex<Snapshot>,
-    symbols: Mutex<HashMap<String, StoredSymbol>>,
-    embeddings: Mutex<HashMap<String, Vec<f32>>>,
-    resolve_index: Mutex<ResolveIndex>,
     status: Mutex<IndexStatus>,
 }
 
 impl Engine {
-    /// Opens an engine rooted at `storage_root`, using `provider` for vectors.
+    /// Opens the substrate at `storage_root`, **hydrating** it when populated.
+    ///
+    /// Hydration reads only provenance and counts; it never reads a source file
+    /// or recomputes an embedding, so opening an existing index is `O(1)`.
     pub fn new(storage_root: &Path, provider: Box<dyn VectorProvider>) -> Result<Self, CoreError> {
         let dual = DualStorage::open(storage_root)?;
-        let empty_snapshot = Snapshot {
-            commit_hash: None,
-            workspace_root: PathBuf::from(""),
-            is_dirty: false,
-            content_hash: String::new(),
-        };
-        let status = IndexStatus {
-            snapshot: empty_snapshot.clone(),
-            file_count: 0,
-            symbol_count: 0,
-            relation_count: 0,
-            capability_level: CapabilityLevel::L0Text,
-        };
-        Ok(Self {
+        let engine = Self {
             dual,
             parser: Parser::new(),
             provider,
-            snapshot: Mutex::new(empty_snapshot),
-            symbols: Mutex::new(HashMap::new()),
-            embeddings: Mutex::new(HashMap::new()),
-            resolve_index: Mutex::new(ResolveIndex::default()),
-            status: Mutex::new(status),
-        })
+            snapshot: Mutex::new(empty_snapshot()),
+            status: Mutex::new(IndexStatus::empty()),
+        };
+        engine.hydrate()?;
+        Ok(engine)
+    }
+
+    /// Reads persisted provenance, counts, and capability into the status.
+    fn hydrate(&self) -> Result<(), CoreError> {
+        let (files, symbols, relations) = self.dual.graph().counts()?;
+        let snapshot = self
+            .dual
+            .graph()
+            .latest_snapshot()?
+            .unwrap_or_else(empty_snapshot);
+        let capability = self
+            .dual
+            .graph()
+            .get_meta(CAPABILITY_META)?
+            .and_then(|value| parse_capability(&value))
+            .unwrap_or(CapabilityLevel::L0Text);
+        *self.snapshot.lock().unwrap() = snapshot.clone();
+        *self.status.lock().unwrap() = IndexStatus {
+            snapshot,
+            file_count: files,
+            symbol_count: symbols,
+            relation_count: relations,
+            capability_level: capability,
+        };
+        Ok(())
+    }
+
+    /// Whether the substrate holds at least one symbol.
+    fn populated(&self) -> Result<bool, CoreError> {
+        Ok(self.dual.graph().has_symbols()?)
     }
 
     /// Indexes every supported source file under `repo_path`.
     ///
     /// Pipeline per file: git provenance -> [`Parser::parse`] ->
-    /// [`DualStorage::insert_symbols`] & [`DualStorage::insert_relations`] ->
-    /// Tantivy indexing + vector embedding.
+    /// [`DualStorage`] (symbols, relations, vectors) -> Tantivy documents. State
+    /// is cleared first, so a rebuild never retains stale rows. Memory is
+    /// `O(largest file + embedding batch)`: nothing repository-proportional is
+    /// held in RAM.
     pub fn index_repository(
         &self,
         repo_path: &Path,
         include_tests: bool,
     ) -> Result<IndexStatus, CoreError> {
         let snapshot = resolve_snapshot(repo_path)?;
+        self.dual.reset()?;
         self.dual.graph().save_snapshot(&snapshot)?;
 
-        let mut symbols: HashMap<String, StoredSymbol> = HashMap::new();
-        let mut embeddings: HashMap<String, Vec<f32>> = HashMap::new();
-        let mut resolve_index = ResolveIndex::default();
-        let mut relations: Vec<Relation> = Vec::new();
-        let mut file_count = 0usize;
+        let mut files: Vec<String> = Vec::new();
         let mut max_capability = CapabilityLevel::L0Text;
 
         for entry in WalkDir::new(repo_path).into_iter().filter_map(Result::ok) {
@@ -279,9 +249,10 @@ impl Engine {
                 Ok(pair) => pair,
                 Err(_) => continue, // unparseable file
             };
-            file_count += 1;
-            if capability_rank(adapter_capability(relative)) > capability_rank(max_capability) {
-                max_capability = adapter_capability(relative);
+            files.push(relative.to_string_lossy().to_string());
+            let capability = adapter_capability(relative);
+            if capability_rank(capability) > capability_rank(max_capability) {
+                max_capability = capability;
             }
 
             let snippets = compute_file_snippets(&source, &parsed_symbols);
@@ -291,11 +262,13 @@ impl Engine {
                 .zip(snippets)
                 .map(|(identity, (range, snippet))| (identity, range, snippet))
                 .collect();
-            // Persist symbols + relations in one graph transaction.
             let entries: Vec<(SymbolIdentity, SourceRange)> = file_identities
                 .iter()
                 .map(|(identity, range, _)| (identity.clone(), range.clone()))
                 .collect();
+            // Symbols must land before their intra-file relations (FKs enforced);
+            // all three writes are per-file transactions, so indexing is a
+            // streaming pass rather than an accumulating one.
             self.dual
                 .graph()
                 .insert_symbols(&entries, &snapshot.content_hash)?;
@@ -303,7 +276,6 @@ impl Engine {
                 .graph()
                 .insert_relations(&parsed_relations, &snapshot.content_hash)?;
 
-            // Index snippets into Tantivy.
             let docs: Vec<lynx_storage::LexicalDoc> = file_identities
                 .iter()
                 .map(|(identity, _, snippet)| lynx_storage::LexicalDoc {
@@ -324,38 +296,31 @@ impl Engine {
                 .collect();
             let text_refs: Vec<&str> = texts.iter().map(String::as_str).collect();
             let vectors = self.provider.embed_batch(&text_refs)?;
-
-            for ((identity, range, snippet), vector) in file_identities.into_iter().zip(vectors) {
-                resolve_index.insert(&identity);
-                embeddings.insert(identity.content_hash.clone(), vector);
-                symbols.insert(
-                    identity.content_hash.clone(),
-                    StoredSymbol {
-                        identity,
-                        range,
-                        code_snippet: snippet,
-                    },
-                );
-            }
-            relations.extend(parsed_relations);
+            let embedding_items: Vec<(String, Vec<f32>)> = file_identities
+                .iter()
+                .map(|(identity, _, _)| identity.content_hash.clone())
+                .zip(vectors)
+                .collect();
+            self.dual.graph().put_embeddings(&embedding_items)?;
         }
 
+        self.dual
+            .graph()
+            .insert_files(&files, &snapshot.content_hash)?;
         // Flush the shared lexical writer once, at the end of the pass, so the
         // on-disk index is quiescent before the session is persisted or served.
         self.dual.lexical().commit()?;
+        self.dual
+            .graph()
+            .set_meta(CAPABILITY_META, capability_name(max_capability))?;
 
+        let (files, symbols, relations) = self.dual.graph().counts()?;
         *self.snapshot.lock().unwrap() = snapshot.clone();
-        *self.symbols.lock().unwrap() = symbols;
-        *self.embeddings.lock().unwrap() = embeddings;
-        *self.resolve_index.lock().unwrap() = resolve_index;
-
-        let symbol_count = self.symbols.lock().unwrap().len();
-        let relation_count = relations.len();
         let status = IndexStatus {
             snapshot,
-            file_count,
-            symbol_count,
-            relation_count,
+            file_count: files,
+            symbol_count: symbols,
+            relation_count: relations,
             capability_level: max_capability,
         };
         *self.status.lock().unwrap() = status.clone();
@@ -370,8 +335,8 @@ impl Engine {
     /// `search`: fuses BM25 (Tantivy) with vector similarity via Reciprocal
     /// Rank Fusion, applies definition boosting, and returns ranked evidence.
     ///
-    /// Bounded and cancellable: see [`Engine::search_with`]. Uses default query
-    /// options (no deadline, no cancellation).
+    /// Uses default query options (no deadline, no cancellation); see
+    /// [`Engine::search_with`].
     pub fn search(
         &self,
         query: &str,
@@ -388,9 +353,9 @@ impl Engine {
     ///
     /// Invariants:
     /// - per-query memory is `O(candidate limit)`, never `O(symbols)`;
-    /// - the semantic scan is `O(N log k)` and observes cancellation/deadline at
-    ///   every candidate, so a caller can stop a pathological query without
-    ///   killing the process;
+    /// - the semantic scan streams vectors from storage and observes
+    ///   cancellation/deadline at every candidate;
+    /// - snippets are materialized only for the returned results;
     /// - on cancellation or timeout the query returns `Err` and releases all
     ///   query-local buffers (there are no background tasks or channels).
     pub fn search_with(
@@ -415,9 +380,7 @@ impl Engine {
             None
         };
 
-        let symbols = self.symbols.lock().unwrap();
-        let embeddings = self.embeddings.lock().unwrap();
-        if symbols.is_empty() {
+        if !self.populated()? {
             return Err(CoreError::NotIndexed);
         }
 
@@ -446,19 +409,25 @@ impl Engine {
             let stage = std::time::Instant::now();
             let query_vec = self.provider.embed_query(query)?;
             check_dimension(self.provider.as_ref(), &query_vec)?;
-            let stop = |opts: &QueryOptions| opts.is_expired();
-            // Bounded, cancellable top-k: O(N log k) time, O(k) memory, and only
-            // the retained hashes are allocated. `take_while` observes the
-            // cancellation/deadline flag per candidate.
-            semantic = top_k_ranked(
-                embeddings
-                    .iter()
-                    .take_while(|_| !stop(opts))
-                    .filter_map(|(hash, vec)| {
-                        cosine_similarity(&query_vec, vec).map(|sim| (hash.as_str(), sim))
-                    }),
-                candidates,
-            );
+            // Bounded, cancellable, streaming top-k: vectors are read from
+            // storage one at a time (O(k) memory retained), and the scan stops
+            // as soon as the deadline/cancellation flag trips.
+            let mut collector = TopK::new(candidates);
+            self.dual.graph().for_each_embedding(|hash, vector| {
+                if opts.is_expired() {
+                    return false;
+                }
+                if let Some(similarity) = cosine_similarity(&query_vec, vector) {
+                    collector.push(hash, similarity);
+                }
+                true
+            })?;
+            semantic = collector
+                .into_sorted()
+                .into_iter()
+                .enumerate()
+                .map(|(rank, (hash, _))| (hash, rank))
+                .collect();
             report.stage("semantic", stage.elapsed());
             if let Some(state) = terminal_state(opts) {
                 return Err(terminal_error(state));
@@ -471,36 +440,60 @@ impl Engine {
         let stage = std::time::Instant::now();
         let fused = rrf_fuse(&lexical, &semantic);
         report.fused(fused.len());
-        let mut evidence: Vec<Evidence> = fused
+        let ranked = self.assemble(&fused, &snapshot, mode, exact, limit)?;
+        report.stage("rank", stage.elapsed());
+
+        let results = ranked.len();
+        let contributions = rank_contributions(&ranked, &lexical, &semantic);
+        Ok(SearchOutcome {
+            evidence: ranked,
+            report: report.finish(QueryState::Completed, results),
+            contributions,
+        })
+    }
+
+    /// Materializes, boosts, ranks, and truncates fused candidates.
+    ///
+    /// Only identity metadata (kind, path) is loaded for the candidate set;
+    /// snippets are fetched **after** truncation, for the retained results only.
+    fn assemble(
+        &self,
+        fused: &[(String, f32)],
+        snapshot: &Snapshot,
+        mode: RetrievalMode,
+        exact: Option<Evidence>,
+        limit: usize,
+    ) -> Result<Vec<Evidence>, CoreError> {
+        if fused.is_empty() && exact.is_none() {
+            return Ok(Vec::new());
+        }
+        let hashes: Vec<String> = fused.iter().map(|(hash, _)| hash.clone()).collect();
+        let metas: HashMap<String, (SymbolIdentity, SourceRange)> = self
+            .dual
+            .graph()
+            .symbols_for(&hashes)?
             .into_iter()
+            .map(|(hash, identity, range)| (hash, (identity, range)))
+            .collect();
+
+        let mut evidence: Vec<Evidence> = fused
+            .iter()
             .filter_map(|(hash, score)| {
-                symbols
-                    .get(&hash)
-                    .map(|stored| stored.to_evidence(&snapshot, score, mode))
+                metas.get(hash).map(|(identity, range)| Evidence {
+                    identity: identity.clone(),
+                    snapshot: snapshot.clone(),
+                    range: range.clone(),
+                    code_snippet: String::new(),
+                    score: *score,
+                    retrieval_mode: mode,
+                })
             })
             .collect();
-        if evidence.is_empty() {
-            // Fall back to the single best channel when one was empty.
-            let list = if lexical.is_empty() {
-                &semantic
-            } else {
-                &lexical
-            };
-            evidence = list
-                .iter()
-                .filter_map(|(hash, _)| {
-                    symbols
-                        .get(hash)
-                        .map(|stored| stored.to_evidence(&snapshot, 0.0, mode))
-                })
-                .collect();
-        }
+
         apply_definition_boost(&mut evidence);
         apply_noise_penalty(&mut evidence);
         let mut ranked = finalize_fused(evidence);
 
-        // Prepend the deterministic exact hit (if any), removing it from the
-        // ranked list so it appears once, in first position.
         if let Some(exact) = exact {
             let exact_hash = exact.identity.content_hash.clone();
             ranked.retain(|item| item.identity.content_hash != exact_hash);
@@ -510,68 +503,146 @@ impl Engine {
             ranked = with_exact;
         }
         ranked.truncate(limit);
-        report.stage("rank", stage.elapsed());
 
-        let results = ranked.len();
-        let contributions = crate::retrieval::rank_contributions(&ranked, &lexical, &semantic);
-        Ok(SearchOutcome {
-            evidence: ranked,
-            report: report.finish(QueryState::Completed, results),
-            contributions,
-        })
+        // Fetch snippets only for the retained results.
+        let retained: Vec<String> = ranked
+            .iter()
+            .filter(|item| item.code_snippet.is_empty())
+            .map(|item| item.identity.content_hash.clone())
+            .collect();
+        if !retained.is_empty() {
+            let snippets = self.dual.lexical().snippets_for(&retained)?;
+            for item in ranked.iter_mut() {
+                if item.code_snippet.is_empty() {
+                    if let Some(text) = snippets.get(&item.identity.content_hash) {
+                        item.code_snippet = text.clone();
+                    }
+                }
+            }
+        }
+        Ok(ranked)
     }
 
     /// `resolve`: exact lookup of a symbol by fqdn or trailing name.
     ///
-    /// Deterministic and `O(1)`: the identity is resolved through the
-    /// precomputed index, never a linear scan, and the resolved result is
-    /// independent of hash-map iteration order.
+    /// Deterministic: an exact fqdn match wins; otherwise, among trailing-name
+    /// matches, production code outranks test/vendor code and ties break on the
+    /// lexicographically smallest `(fqdn, content_hash)`. Resolved by a bounded
+    /// SQL lookup rather than a scan or a ranking pass, and it materializes the
+    /// snippet for exactly one symbol regardless of how many share the name.
+    ///
+    /// When several distinct symbols share the name, use [`Engine::resolve_all`]
+    /// to see every candidate rather than the single deterministic winner.
     pub fn resolve(&self, fqdn_or_name: &str) -> Result<Option<Evidence>, CoreError> {
-        let resolve_index = self.resolve_index.lock().unwrap();
-        if resolve_index.by_fqdn.is_empty() {
-            return Err(CoreError::NotIndexed);
-        }
-        let needle = fqdn_or_name.trim();
-        let Some(hash) = resolve_index.lookup(needle) else {
+        let mut matches = self.ranked_matches(fqdn_or_name)?;
+        let Some((identity, range)) = matches.drain(..).next() else {
             return Ok(None);
         };
-        let hash = hash.to_string();
-        drop(resolve_index);
-
-        let symbols = self.symbols.lock().unwrap();
+        let code_snippet = self
+            .dual
+            .lexical()
+            .snippet_for(&identity.content_hash)?
+            .unwrap_or_default();
         let snapshot = self.snapshot.lock().unwrap().clone();
-        Ok(symbols
-            .get(&hash)
-            .map(|stored| stored.to_evidence(&snapshot, 1.0, RetrievalMode::Structural)))
+        Ok(Some(Evidence {
+            identity,
+            snapshot,
+            range,
+            code_snippet,
+            score: 1.0,
+            retrieval_mode: RetrievalMode::Structural,
+        }))
+    }
+
+    /// Every symbol matching `fqdn_or_name` (exact fqdn or trailing name),
+    /// ordered deterministically: production paths before test, then vendor;
+    /// exact fqdn matches first; ties on lexicographic `(fqdn, hash)`.
+    ///
+    /// This is the ambiguity surface: a consumer that needs to disambiguate
+    /// `Login` receives every `Login` rather than a silently-chosen winner.
+    pub fn resolve_all(&self, fqdn_or_name: &str) -> Result<Vec<Evidence>, CoreError> {
+        let matches = self.ranked_matches(fqdn_or_name)?;
+        if matches.is_empty() {
+            return Ok(Vec::new());
+        }
+        let snapshot = self.snapshot.lock().unwrap().clone();
+        let hashes: Vec<String> = matches
+            .iter()
+            .map(|(identity, _)| identity.content_hash.clone())
+            .collect();
+        let snippets = self.dual.lexical().snippets_for(&hashes)?;
+        Ok(matches
+            .into_iter()
+            .map(|(identity, range)| {
+                let code_snippet = snippets
+                    .get(&identity.content_hash)
+                    .cloned()
+                    .unwrap_or_default();
+                Evidence {
+                    identity,
+                    snapshot: snapshot.clone(),
+                    range,
+                    code_snippet,
+                    score: 1.0,
+                    retrieval_mode: RetrievalMode::Structural,
+                }
+            })
+            .collect())
+    }
+
+    /// All symbols matching `needle`, ordered deterministically (exact fqdn
+    /// first, production before test/vendor, then lexicographic). Identity
+    /// metadata only — no snippets. Errors `NotIndexed` when the substrate is
+    /// empty.
+    fn ranked_matches(
+        &self,
+        fqdn_or_name: &str,
+    ) -> Result<Vec<(SymbolIdentity, SourceRange)>, CoreError> {
+        let needle = fqdn_or_name.trim();
+        let mut matches = self.dual.graph().resolve_all(needle)?;
+        if matches.is_empty() {
+            if !self.populated()? {
+                return Err(CoreError::NotIndexed);
+            }
+            return Ok(Vec::new());
+        }
+        matches.sort_by(|a, b| {
+            let key = |(identity, _): &(SymbolIdentity, SourceRange)| {
+                (
+                    usize::from(identity.fqdn != needle),
+                    noise_rank(&identity.file_path),
+                    identity.fqdn.clone(),
+                    identity.content_hash.clone(),
+                )
+            };
+            key(a).cmp(&key(b))
+        });
+        Ok(matches)
     }
 
     /// `inspect`: full evidence details for a symbol by content hash.
     pub fn inspect(&self, symbol_hash: &str) -> Result<Option<Evidence>, CoreError> {
-        let symbols = self.symbols.lock().unwrap();
-        if symbols.is_empty() {
-            return Err(CoreError::NotIndexed);
-        }
-        let snapshot = self.snapshot.lock().unwrap().clone();
-        let stored = match symbols.get(symbol_hash) {
-            Some(stored) => stored,
-            None => {
-                // Confirm via storage whether the hash is merely uncached.
-                let confirmed = self.dual.get_symbol_by_hash(symbol_hash)?;
-                return Ok(confirmed.map(|identity| Evidence {
-                    identity,
-                    snapshot: snapshot.clone(),
-                    range: SourceRange::new(1, 1, 0, 0).unwrap(),
-                    code_snippet: String::new(),
-                    score: 0.0,
-                    retrieval_mode: RetrievalMode::Structural,
-                }));
+        let resolved = self.dual.graph().get_symbol(symbol_hash)?;
+        let Some((identity, range)) = resolved else {
+            if !self.populated()? {
+                return Err(CoreError::NotIndexed);
             }
+            return Ok(None);
         };
-        Ok(Some(stored.to_evidence(
-            &snapshot,
-            1.0,
-            RetrievalMode::Structural,
-        )))
+        let snippet = self
+            .dual
+            .lexical()
+            .snippet_for(&identity.content_hash)?
+            .unwrap_or_default();
+        let snapshot = self.snapshot.lock().unwrap().clone();
+        Ok(Some(Evidence {
+            identity,
+            snapshot,
+            range,
+            code_snippet: snippet,
+            score: 1.0,
+            retrieval_mode: RetrievalMode::Structural,
+        }))
     }
 
     /// `relations`: structural graph query incident to `symbol_hash`.
@@ -639,7 +710,8 @@ impl Engine {
 
     /// `similar`: vector-only similarity lookup of a symbol against all others.
     ///
-    /// Bounded (`O(N log k)`) and cancellable via [`QueryOptions`].
+    /// Bounded (`O(N log k)` time, `O(k)` memory) and cancellable; vectors are
+    /// streamed from storage rather than held in memory.
     pub fn similar(&self, symbol_hash: &str, limit: usize) -> Result<Vec<Evidence>, CoreError> {
         self.similar_with(symbol_hash, limit, &QueryOptions::default())
     }
@@ -654,33 +726,63 @@ impl Engine {
         if let Some(state) = terminal_state(opts) {
             return Err(terminal_error(state));
         }
-        let symbols = self.symbols.lock().unwrap();
-        let embeddings = self.embeddings.lock().unwrap();
-        if symbols.is_empty() {
+        if !self.populated()? {
             return Err(CoreError::NotIndexed);
         }
-        let snapshot = self.snapshot.lock().unwrap().clone();
-        let target = embeddings.get(symbol_hash).ok_or(CoreError::NotIndexed)?;
-        // Bounded top-k: O(N log k) time, O(k) memory, preserving cosine scores.
-        let ranked = top_k_scored(
-            embeddings
-                .iter()
-                .take_while(|_| !opts.is_expired())
-                .filter(|(hash, _)| hash.as_str() != symbol_hash)
-                .filter_map(|(hash, vec)| {
-                    cosine_similarity(target, vec).map(|sim| (hash.as_str(), sim))
-                }),
-            limit,
-        );
+        let target = self
+            .dual
+            .graph()
+            .embedding(symbol_hash)?
+            .ok_or(CoreError::NotIndexed)?;
+        let mut collector = TopK::new(limit);
+        self.dual.graph().for_each_embedding(|hash, vector| {
+            if opts.is_expired() {
+                return false;
+            }
+            if hash == symbol_hash {
+                return true;
+            }
+            if let Some(similarity) = cosine_similarity(&target, vector) {
+                collector.push(hash, similarity);
+            }
+            true
+        })?;
         if let Some(state) = terminal_state(opts) {
             return Err(terminal_error(state));
         }
+        let ranked = collector.into_sorted();
+        let snapshot = self.snapshot.lock().unwrap().clone();
+        self.materialize_ranked(ranked, &snapshot, RetrievalMode::Semantic)
+    }
+
+    /// Loads identity metadata and snippets for already-ranked `(hash, score)`
+    /// pairs, preserving order.
+    fn materialize_ranked(
+        &self,
+        ranked: Vec<(String, f32)>,
+        snapshot: &Snapshot,
+        mode: RetrievalMode,
+    ) -> Result<Vec<Evidence>, CoreError> {
+        let hashes: Vec<String> = ranked.iter().map(|(hash, _)| hash.clone()).collect();
+        let metas: HashMap<String, (SymbolIdentity, SourceRange)> = self
+            .dual
+            .graph()
+            .symbols_for(&hashes)?
+            .into_iter()
+            .map(|(hash, identity, range)| (hash, (identity, range)))
+            .collect();
+        let snippets = self.dual.lexical().snippets_for(&hashes)?;
         Ok(ranked
             .into_iter()
             .filter_map(|(hash, score)| {
-                symbols
-                    .get(&hash)
-                    .map(|stored| stored.to_evidence(&snapshot, score, RetrievalMode::Semantic))
+                metas.get(&hash).map(|(identity, range)| Evidence {
+                    identity: identity.clone(),
+                    snapshot: snapshot.clone(),
+                    range: range.clone(),
+                    code_snippet: snippets.get(&hash).cloned().unwrap_or_default(),
+                    score,
+                    retrieval_mode: mode,
+                })
             })
             .collect())
     }
@@ -741,6 +843,27 @@ impl Engine {
             ),
             outcome.report,
         ))
+    }
+}
+
+/// An empty workspace snapshot.
+fn empty_snapshot() -> Snapshot {
+    Snapshot {
+        commit_hash: None,
+        workspace_root: PathBuf::from(""),
+        is_dirty: false,
+        content_hash: String::new(),
+    }
+}
+
+/// Parses a persisted capability-level wire value.
+fn parse_capability(value: &str) -> Option<CapabilityLevel> {
+    match value {
+        "L0Text" => Some(CapabilityLevel::L0Text),
+        "L1Parsed" => Some(CapabilityLevel::L1Parsed),
+        "L2Symbolized" => Some(CapabilityLevel::L2Symbolized),
+        "L3Structural" => Some(CapabilityLevel::L3Structural),
+        _ => None,
     }
 }
 
@@ -819,6 +942,16 @@ fn should_skip(relative: &Path, include_tests: bool) -> bool {
     })
 }
 
+/// Numeric rank of a path's noise tier (production < test < vendor), used to
+/// order ambiguous exact matches so production code wins deterministically.
+fn noise_rank(path: &Path) -> u8 {
+    match classify_path(path) {
+        PathNoise::None => 0,
+        PathNoise::Test => 1,
+        PathNoise::Vendor => 2,
+    }
+}
+
 /// Numeric rank of a capability level, used to track the strongest guarantee
 /// seen while indexing (since `CapabilityLevel` does not implement `Ord`).
 fn capability_rank(level: CapabilityLevel) -> u8 {
@@ -827,6 +960,16 @@ fn capability_rank(level: CapabilityLevel) -> u8 {
         CapabilityLevel::L1Parsed => 1,
         CapabilityLevel::L2Symbolized => 2,
         CapabilityLevel::L3Structural => 3,
+    }
+}
+
+/// Wire name of a capability level, for persistence.
+fn capability_name(level: CapabilityLevel) -> &'static str {
+    match level {
+        CapabilityLevel::L0Text => "L0Text",
+        CapabilityLevel::L1Parsed => "L1Parsed",
+        CapabilityLevel::L2Symbolized => "L2Symbolized",
+        CapabilityLevel::L3Structural => "L3Structural",
     }
 }
 
@@ -876,20 +1019,12 @@ fn embedding_text(identity: &SymbolIdentity, snippet: &str) -> String {
 /// orders symbols by that anchor, and ends each excerpt at the next symbol's
 /// anchor (bounded by [`MAX_SNIPPET_LINES`]). Module pseudo-symbols retain a
 /// bounded head of the file ([`MAX_MODULE_SNIPPET_LINES`]).
-///
-/// This replaces the previous per-symbol `source.find(name)` 25-line window,
-/// which anchored on the first *substring* match (often a call site or comment)
-/// and produced heavily overlapping excerpts. Overlap multiplied embedding cost
-/// (the same file text embedded once per symbol) and made reported ranges
-/// ambiguous. The result is aligned one-to-one with `identities`.
 fn compute_file_snippets(
     source: &str,
     identities: &[SymbolIdentity],
 ) -> Vec<(SourceRange, String)> {
     let total_lines = source.lines().count().max(1);
 
-    // Anchor each symbol: modules at the file head, others at the first
-    // whole-word occurrence of the trailing name.
     let mut anchors: Vec<(usize, usize)> = identities
         .iter()
         .enumerate()
@@ -897,8 +1032,7 @@ fn compute_file_snippets(
             let line = if matches!(identity.kind, SymbolKind::Module) {
                 1
             } else {
-                let name = trailing_segment(&identity.fqdn);
-                find_whole_word(source, name)
+                find_whole_word(source, identity.trailing_name())
                     .map(|offset| byte_offset_line(source, offset).max(1))
                     .unwrap_or(1)
             };
@@ -906,8 +1040,6 @@ fn compute_file_snippets(
         })
         .collect();
 
-    // Order by anchor line for non-overlapping window boundaries; module (line
-    // 1) sorts first, which is fine because its window is computed separately.
     anchors.sort_by_key(|(line, index)| (*line, *index));
 
     let mut snippets: Vec<Option<(SourceRange, String)>> = vec![None; identities.len()];
@@ -918,7 +1050,6 @@ fn compute_file_snippets(
             let end = total_lines.min(MAX_MODULE_SNIPPET_LINES);
             (end, slice_lines(source, 1, end))
         } else {
-            // End just before the next symbol's anchor (or at the snippet cap).
             let next_line = anchors
                 .get(position + 1)
                 .map(|(line, _)| *line)
@@ -1016,14 +1147,6 @@ fn line_end_byte(source: &str, line: usize) -> usize {
     source.len()
 }
 
-/// Trailing identifier segment of an fqdn (`a::b.C` -> `C`).
-fn trailing_segment(fqdn: &str) -> &str {
-    match fqdn.rfind([':', '.']) {
-        Some(index) => &fqdn[index + 1..],
-        None => fqdn,
-    }
-}
-
 /// Protocol wire-form of a language, for the Tantivy `language` field.
 fn wire_language(language: Language) -> &'static str {
     match language {
@@ -1056,6 +1179,7 @@ fn check_dimension(provider: &dyn VectorProvider, vec: &[f32]) -> Result<(), Cor
 mod tests {
     use super::*;
     use lynx_embed::EmbedError;
+    use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
 
     /// Deterministic fake provider: maps a text to a fixed vector seeded by a
     /// hash of its characters, so tests never need the ONNX model.
@@ -1066,6 +1190,23 @@ mod tests {
             Ok(fake_vec(text))
         }
         fn embed_batch(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>, EmbedError> {
+            Ok(texts.iter().map(|t| fake_vec(t)).collect())
+        }
+        fn dimension(&self) -> usize {
+            8
+        }
+    }
+
+    /// Counts embedding calls (via a shared counter) so a test can prove a
+    /// hydrated engine does not re-embed — i.e. does not re-index.
+    struct CountingProvider(std::sync::Arc<AtomicUsize>);
+
+    impl VectorProvider for CountingProvider {
+        fn embed_query(&self, text: &str) -> Result<Vec<f32>, EmbedError> {
+            Ok(fake_vec(text))
+        }
+        fn embed_batch(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>, EmbedError> {
+            self.0.fetch_add(texts.len(), AtomicOrdering::SeqCst);
             Ok(texts.iter().map(|t| fake_vec(t)).collect())
         }
         fn dimension(&self) -> usize {
@@ -1124,6 +1265,7 @@ mod tests {
         let resolved = engine.resolve("auth::Validate").unwrap().unwrap();
         assert_eq!(resolved.identity.fqdn, "auth::Validate");
         assert_eq!(resolved.retrieval_mode, RetrievalMode::Structural);
+        assert!(!resolved.code_snippet.is_empty());
     }
 
     #[test]
@@ -1168,6 +1310,8 @@ mod tests {
             .unwrap();
         assert!(!results.is_empty());
         assert!(results[0].score >= results.last().map(|l| l.score).unwrap_or(0.0));
+        // Returned evidence carries its snippet (fetched post-truncation).
+        assert!(results.iter().any(|e| !e.code_snippet.is_empty()));
     }
 
     #[test]
@@ -1222,15 +1366,74 @@ mod tests {
         let engine = Engine::new(storage.path(), Box::new(FakeProvider)).unwrap();
         engine.index_repository(ws.path(), false).unwrap();
 
-        // Same query, same index, same config -> same logical result, every time.
         let first = engine.resolve("Dup").unwrap().unwrap();
         for _ in 0..20 {
             let again = engine.resolve("Dup").unwrap().unwrap();
             assert_eq!(first.identity.fqdn, again.identity.fqdn);
             assert_eq!(first.identity.content_hash, again.identity.content_hash);
         }
-        // The winner is the lexicographically smallest fqdn (deterministic).
         assert_eq!(first.identity.fqdn, "a::Dup");
+    }
+
+    /// The headline persistence invariant: a second `Engine` over the same
+    /// storage root hydrates and answers queries **without re-indexing**.
+    #[test]
+    fn reopening_hydrates_without_reindexing() {
+        let ws = temp_root();
+        write_file(
+            ws.path(),
+            "auth/service.go",
+            "package auth\n\nfunc Validate(u string) bool { return u != \"\" }\n",
+        );
+        let storage = temp_root();
+        let first_counter = std::sync::Arc::new(AtomicUsize::new(0));
+        let first = Engine::new(
+            storage.path(),
+            Box::new(CountingProvider(first_counter.clone())),
+        )
+        .unwrap();
+        let status = first.index_repository(ws.path(), false).unwrap();
+        assert!(status.symbol_count > 0);
+        assert!(first_counter.load(AtomicOrdering::SeqCst) > 0);
+        drop(first);
+
+        // Reopen: hydration must not embed anything.
+        let reopened_counter = std::sync::Arc::new(AtomicUsize::new(0));
+        let second = Engine::new(
+            storage.path(),
+            Box::new(CountingProvider(reopened_counter.clone())),
+        )
+        .unwrap();
+        let reopened = second.index_status();
+        assert_eq!(reopened.symbol_count, status.symbol_count);
+        assert_eq!(reopened.file_count, status.file_count);
+        assert_eq!(reopened.capability_level, CapabilityLevel::L3Structural);
+        assert_eq!(reopened_counter.load(AtomicOrdering::SeqCst), 0);
+        // And resolution + lexical search work straight from storage.
+        assert!(second.resolve("auth::Validate").unwrap().is_some());
+        assert!(!second
+            .search("Validate", RetrievalMode::Lexical, 5)
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    fn reindexing_removes_stale_symbols() {
+        let ws = temp_root();
+        write_file(
+            ws.path(),
+            "a.rs",
+            "pub fn alpha() -> i32 { 1 }\npub fn beta() -> i32 { 2 }\n",
+        );
+        let storage = temp_root();
+        let engine = Engine::new(storage.path(), Box::new(FakeProvider)).unwrap();
+        engine.index_repository(ws.path(), false).unwrap();
+        assert!(engine.resolve("beta").unwrap().is_some());
+
+        std::fs::write(ws.path().join("a.rs"), "pub fn alpha() -> i32 { 1 }\n").unwrap();
+        engine.index_repository(ws.path(), false).unwrap();
+        assert!(engine.resolve("alpha").unwrap().is_some());
+        assert!(engine.resolve("beta").unwrap().is_none());
     }
 
     #[test]
@@ -1263,7 +1466,6 @@ mod tests {
             .search_with("Validate", RetrievalMode::Hybrid, 3, &opts)
             .unwrap();
         assert_eq!(outcome.report.state, QueryState::Completed);
-        // Fused candidates never exceed the sum of the two bounded channels.
         assert!(outcome.report.fused_candidates <= 2 * CANDIDATE_FLOOR);
         assert_eq!(outcome.report.results, outcome.evidence.len());
         assert!(!outcome.report.stages.is_empty());
@@ -1314,7 +1516,6 @@ mod tests {
             .collect();
         ranges.sort();
         assert_eq!(ranges, vec![(1, 1), (2, 2), (3, 3)]);
-        // Non-overlapping: each start is strictly after the previous end.
         for window in ranges.windows(2) {
             assert!(window[0].1 < window[1].0);
         }

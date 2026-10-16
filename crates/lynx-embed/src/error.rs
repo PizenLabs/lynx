@@ -14,4 +14,8 @@ pub enum EmbedError {
     /// An internal mutex guarding the shared model was poisoned.
     #[error("embedding model lock poisoned: {0}")]
     Poisoned(String),
+    /// No embedding provider is available in this engine (structural or
+    /// lexical-only operation). Callers should not request semantic retrieval.
+    #[error("no embedding provider available: {0}")]
+    Unavailable(String),
 }

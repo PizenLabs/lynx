@@ -1,4 +1,4 @@
-//! The seven MCP tools and their strict mapping onto [`Engine`] primitives.
+//! The eight MCP tools and their strict mapping onto [`Engine`] primitives.
 //!
 //! No internal storage or database surface is exposed: every tool delegates
 //! to exactly one retrieval primitive and serializes its protocol result.
@@ -35,11 +35,22 @@ pub(crate) fn definitions() -> Value {
             },
             {
                 "name": "resolve",
-                "description": "Exact symbol lookup by fully-qualified name or trailing name. Returns the resolved Evidence with SymbolIdentity coordinates, or null.",
+                "description": "Exact symbol lookup by fully-qualified name or trailing name. Returns the deterministic best Evidence with SymbolIdentity coordinates, or null. When several symbols share a trailing name, this returns the preferred one; use `resolve_all` to see every candidate.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
                         "name": {"type": "string", "description": "Symbol fqdn (`auth::service::login`) or trailing name (`login`)"}
+                    },
+                    "required": ["name"]
+                }
+            },
+            {
+                "name": "resolve_all",
+                "description": "Every symbol matching a fqdn or trailing name, ordered deterministically (production before test/vendor, exact fqdn first, then lexicographic). Exposes ambiguity instead of hiding it.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string", "description": "Symbol fqdn or trailing name"}
                     },
                     "required": ["name"]
                 }
@@ -146,6 +157,7 @@ pub(crate) fn dispatch(
     match tool {
         "search" => search(engine, params),
         "resolve" => resolve(engine, params),
+        "resolve_all" => resolve_all(engine, params),
         "inspect" => inspect(engine, params),
         "relations" => relations(engine, params),
         "similar" => similar(engine, params),
@@ -161,6 +173,7 @@ pub(crate) fn dispatch(
 pub(crate) const TOOL_NAMES: &[&str] = &[
     "search",
     "resolve",
+    "resolve_all",
     "inspect",
     "relations",
     "similar",
@@ -196,6 +209,18 @@ fn resolve(engine: &Engine, params: &Value) -> Result<Value, ToolFailure> {
         .resolve(&p.name)
         .map_err(|e| ToolFailure::internal(e.to_string()))?;
     Ok(serde_json::to_value(evidence).expect("Option<Evidence> serializes"))
+}
+
+fn resolve_all(engine: &Engine, params: &Value) -> Result<Value, ToolFailure> {
+    #[derive(Deserialize)]
+    struct Params {
+        name: String,
+    }
+    let p: Params = parse(params)?;
+    let matches = engine
+        .resolve_all(&p.name)
+        .map_err(|e| ToolFailure::internal(e.to_string()))?;
+    Ok(serde_json::to_value(matches).expect("Vec<Evidence> serializes"))
 }
 
 fn inspect(engine: &Engine, params: &Value) -> Result<Value, ToolFailure> {

@@ -28,10 +28,10 @@ pub mod query;
 pub mod retrieval;
 
 pub use compiler::ContextCompiler;
-pub use engine::{Engine, IndexStatus, SearchOutcome, StoredSymbol};
+pub use engine::{Engine, IndexStatus, SearchOutcome};
 pub use error::CoreError;
 pub use query::{
     next_query_id, CancelToken, QueryOptions, QueryReport, QueryState, RankContribution,
     ReportBuilder, StageTiming,
 };
-pub use retrieval::{classify_path, classify_query, PathNoise, QueryClass};
+pub use retrieval::{classify_path, classify_query, PathNoise, QueryClass, TopK};
