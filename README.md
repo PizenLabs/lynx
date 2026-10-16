@@ -16,6 +16,7 @@
 [MCP](#connect-an-agent-mcp) •
 [CLI](#cli) •
 [Platforms](#supported-platforms) •
+[Releases](#releases) •
 [Limits](#resource-and-support-envelope) •
 [Architecture](#architecture)
 
@@ -225,6 +226,33 @@ for the exact status of each target.
 
 ---
 
+## Releases
+
+Releases are triggered by **Git tags**, and the tag's shape decides whether
+production binaries are published (the rule lives in
+[`scripts/release/classify_tag.sh`](scripts/release/classify_tag.sh)):
+
+| Tag | Meaning |
+|---|---|
+| `v1.0.1` (stable `vMAJOR.MINOR.PATCH`) | **Stable release** — builds production binaries, checksums, and a GitHub Release |
+| `v1.0.1-rc.1`, `v1.0.1-alpha.1`, `v1.0.1-beta.1` | **Prerelease** — validation only; **does not** update the stable release surface |
+| `v1`, `v1.0`, `v1.0.0foo`, `release-v1.0.0` | **Invalid** — the pipeline fails closed |
+
+A stable release guarantees `git tag == Cargo package version == lx --version`.
+The installer consumes only stable releases: `latest` resolves to the newest
+non-prerelease release, and an explicitly requested prerelease tag is refused
+unless `LYNX_ALLOW_PRERELEASE=1` is set for testing.
+
+**crates.io publication is separate and maintainer-controlled.** GitHub Releases
+do not trigger a crates.io publish. `cargo install pizen-lynx` installs the one
+product binary `lx`; the internal crates are published only because Cargo
+requires them and carry no stability guarantee.
+
+The full contract — state machine, target policy, installer rules, publication
+policy — is [`docs/architecture/release-contract.md`](docs/architecture/release-contract.md).
+
+---
+
 ## Resource and support envelope
 
 **Languages.** Rust, Go, TypeScript, JavaScript, and Python are parsed to symbols
@@ -308,6 +336,12 @@ Distribution tests (installer + clean-machine install → index → query → MC
 make dist-test
 # or
 tests/distribution/run.sh
+```
+
+Release classification and version guards (the release workflow's own logic):
+
+```bash
+tests/distribution/release_test.sh
 ```
 
 Registry / crates.io packaging test (package every crate, install `pizen-lynx`

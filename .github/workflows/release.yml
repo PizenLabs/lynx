@@ -1,11 +1,29 @@
 name: Release
 
-# Builds the supported prebuilt targets, verifies the source, and publishes a
-# GitHub Release with `lynx-vX.Y.Z-<os>-<arch>.tar.gz` archives plus a
-# `SHA256SUMS` manifest that `install.sh` verifies before installing.
+# Release decision state machine.
 #
-# Only a tag whose version matches the workspace `[workspace.package] version`
-# produces a release; see the `version-guard` job.
+# The classification rule is NOT reimplemented here: the `classify` job runs
+# `scripts/release/classify_tag.sh`, the single source of truth, and every
+# downstream job gates on its `kind` output. A tag can therefore only take one
+# of three paths:
+#
+#   tag
+#    |-- invalid    -> classify job fails -> FAIL CLOSED (no build, no release)
+#    |-- prerelease -> `prerelease-validate` builds + smoke-tests, then STOP
+#    |                 (no artifacts uploaded, no GitHub Release, no update of
+#    |                  the stable installer surface)
+#    '-- stable     -> `build` (native, per target) -> `release`
+#                       -> archives + SHA256SUMS -> GitHub Release
+#
+# Concretely:
+#   v1.0.1          stable      -> production binaries + checksums + Release
+#   v1.0.1-rc.1     prerelease  -> validation only; NEVER a production release
+#   v1.0.1-alpha.1  prerelease  -> validation only; NEVER a production release
+#   v1.0.1-beta.1   prerelease  -> validation only; NEVER a production release
+#
+# `install.sh` consumes only stable releases: it resolves `latest` through
+# GitHub's `/releases/latest` (which excludes prereleases) and rejects an
+# explicitly requested prerelease tag.
 
 on:
   push:
@@ -16,6 +34,36 @@ permissions:
   contents: write
 
 jobs:
+  # Classify the tag. On an invalid tag this job fails, closing the pipeline.
+  classify:
+    name: classify tag (stable / prerelease / invalid)
+    runs-on: ubuntu-24.04
+    outputs:
+      kind: ${{ steps.classify.outputs.kind }}
+      version: ${{ steps.classify.outputs.version }}
+      is_tag: ${{ steps.classify.outputs.is_tag }}
+    steps:
+      - uses: actions/checkout@v7
+      - id: classify
+        name: Classify the git tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            # Fails the job (non-zero) on an invalid tag: fail closed.
+            kind="$(scripts/release/classify_tag.sh "${GITHUB_REF_NAME}")"
+            version="${GITHUB_REF_NAME#v}"
+            is_tag=true
+          else
+            kind="dispatch"
+            version=""
+            is_tag=false
+          fi
+          echo "kind=${kind}"       >> "$GITHUB_OUTPUT"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "is_tag=${is_tag}"   >> "$GITHUB_OUTPUT"
+          echo "classified ${GITHUB_REF:-<none>} as '${kind}' (version '${version}')"
+
   verify:
     name: fmt / check / clippy / test
     runs-on: ubuntu-24.04
@@ -30,31 +78,28 @@ jobs:
       - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
       - run: cargo test --workspace
 
+  # Fail closed unless tag == resolved Cargo package version (for stable AND
+  # prerelease tags). Uses `cargo metadata`, not a textual grep of Cargo.toml.
   version-guard:
-    name: tag matches workspace version
+    name: tag == package version
+    needs: [classify]
+    if: needs.classify.outputs.is_tag == 'true'
     runs-on: ubuntu-24.04
-    if: startsWith(github.ref, 'refs/tags/')
     steps:
       - uses: actions/checkout@v7
-      - name: Check tag == workspace version
-        run: |
-          tag="${GITHUB_REF_NAME#v}"
-          version="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1)"
-          echo "tag=$tag workspace-version=$version"
-          if [ "$tag" != "$version" ]; then
-            echo "::error::tag v$tag does not match workspace version $version"
-            exit 1
-          fi
+      - uses: dtolnay/rust-toolchain@stable
+      - run: scripts/release/check_versions.sh "${GITHUB_REF_NAME}"
 
+  # The ONLY producer of production artifacts. Gated on a stable tag.
   build:
     name: build ${{ matrix.platform }}
-    needs: [verify, version-guard]
-    # `version-guard` is skipped on workflow_dispatch; allow the build then.
-    if: ${{ always() && (needs.verify.result == 'success') && (needs.version-guard.result == 'success' || needs.version-guard.result == 'skipped') }}
+    needs: [classify, verify, version-guard]
+    if: needs.classify.outputs.kind == 'stable'
     strategy:
       fail-fast: false
       matrix:
         include:
+          # REQUIRED targets — a failure here fails the release (fail closed).
           - runner: macos-14          # Apple Silicon (arm64)
             target: aarch64-apple-darwin
             platform: darwin-arm64
@@ -64,9 +109,14 @@ jobs:
           - runner: ubuntu-24.04      # x86_64
             target: x86_64-unknown-linux-gnu
             platform: linux-x86_64
-          - runner: ubuntu-24.04-arm  # arm64 (public repos / arm64 runners)
+          # CONDITIONAL target: `ubuntu-24.04-arm` requires an arm64 runner to be
+          # available on the repository plan. It is required (not optional): if
+          # the runner is unavailable the job fails and NO release is published.
+          # See docs/architecture/release-readiness.md for the target policy.
+          - runner: ubuntu-24.04-arm  # arm64
             target: aarch64-unknown-linux-gnu
             platform: linux-arm64
+          # UNSUPPORTED: Windows. No target is built and none is claimed.
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v7
@@ -76,17 +126,29 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Build release binary
         run: cargo build --release --locked -p pizen-lynx --target ${{ matrix.target }}
+      - name: Verify binary version == tag version
+        shell: bash
+        run: |
+          set -euo pipefail
+          scripts/release/check_versions.sh "${GITHUB_REF_NAME}" \
+            --binary "target/${{ matrix.target }}/release/lx"
       - name: Package archive
         shell: bash
         run: |
           set -euo pipefail
-          tag="${GITHUB_REF_NAME:-dev}"
+          tag="${GITHUB_REF_NAME}"
           asset="lynx-${tag}-${{ matrix.platform }}.tar.gz"
           mkdir -p dist
           cp "target/${{ matrix.target }}/release/lx" dist/lx
           chmod 0755 dist/lx
           tar -czf "$asset" -C dist lx
           rm -f dist/lx
+          # Fail closed if the archive does not contain exactly `lx` at its root.
+          contents="$(tar -tzf "$asset")"
+          if [ "$contents" != "lx" ]; then
+            echo "::error::archive ${asset} contents unexpected: ${contents}"
+            exit 1
+          fi
           echo "ASSET=$asset" >> "$GITHUB_ENV"
       - name: Smoke-test the binary (native)
         shell: bash
@@ -105,22 +167,60 @@ jobs:
           path: ${{ env.ASSET }}
           if-no-files-found: error
 
+  # A prerelease tag takes this path and then stops. It builds and smoke-tests
+  # the binary, but uploads no artifacts and creates no GitHub Release, so it
+  # cannot update the stable installer surface. `workflow_dispatch` (manual)
+  # takes the same validation-only path.
+  prerelease-validate:
+    name: validation only (no production release)
+    needs: [classify, verify]
+    if: needs.classify.outputs.kind == 'prerelease' || needs.classify.outputs.kind == 'dispatch'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build (validation only)
+        run: cargo build --release --locked -p pizen-lynx
+      - name: Smoke-test (validation only)
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./target/release/lx --version
+          ./target/release/lx mcp --check
+      - name: State the outcome explicitly
+        shell: bash
+        run: |
+          echo "kind=${{ needs.classify.outputs.kind }}"
+          echo "No production binaries were built, uploaded, or released."
+          echo "The stable release surface is unchanged."
+
+  # Creates the GitHub Release. Gated on a stable tag; consumes only the
+  # archives produced by `build`.
   release:
-    name: publish release
-    needs: [build]
-    if: startsWith(github.ref, 'refs/tags/')
+    name: publish stable release
+    needs: [classify, build]
+    if: needs.classify.outputs.kind == 'stable'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/download-artifact@v4
         with:
           path: dist
           merge-multiple: true
-      - name: Generate SHA256SUMS
+      - name: Generate SHA256SUMS from the final artifacts
         shell: bash
         run: |
           set -euo pipefail
           cd dist
+          # Checksum the release archives exactly as downloaded, then fail closed
+          # if any archive is missing from the manifest.
           sha256sum lynx-*.tar.gz > SHA256SUMS
+          for archive in lynx-*.tar.gz; do
+            grep -q " ${archive}\$" SHA256SUMS || {
+              echo "::error::${archive} is missing from SHA256SUMS"
+              exit 1
+            }
+          done
           echo "--- SHA256SUMS ---"
           cat SHA256SUMS
       - name: Publish
@@ -131,6 +231,8 @@ jobs:
           set -euo pipefail
           tag="${GITHUB_REF_NAME}"
           gh release create "$tag" \
+            --verify-tag \
+            --latest \
             --title "Lynx ${tag}" \
-            --notes "Prebuilt binaries for ${tag}. Verify the SHA256SUMS manifest before installing. See docs/architecture/mcp-compatibility.md for MCP setup." \
+            --notes "Stable release ${tag}. Verify the SHA256SUMS manifest before installing. See docs/architecture/mcp-compatibility.md for MCP setup." \
             dist/lynx-*.tar.gz dist/SHA256SUMS

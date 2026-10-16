@@ -10,6 +10,30 @@ There are two distribution surfaces, both gated by the same tag:
 1. **Prebuilt archives** (GitHub Releases) — consumed by `install.sh`.
 2. **crates.io packages** — consumed by `cargo install pizen-lynx`.
 
+The normative contract is [`release-contract.md`](release-contract.md).
+
+## 0. Release state machine
+
+The tag's shape decides the path. The rule lives once in
+`scripts/release/classify_tag.sh`, invoked by the workflow and by the tests.
+
+```text
+TAG
+ │
+ ├── invalid ───────────────→ FAIL (classify job exits non-zero)
+ │
+ ├── prerelease ────────────→ VALIDATE ONLY → STOP
+ │                             (build + smoke test; no artifacts, no Release)
+ │
+ └── stable ────────────────→ BUILD → VERIFY → RELEASE
+```
+
+| Tag | Kind | Result |
+|---|---|---|
+| `v1.0.1` | stable | build + checksums + GitHub Release |
+| `v1.0.1-rc.1`, `v1.0.1-alpha.1`, `v1.0.1-beta.1` | prerelease | validation only; no artifacts, no Release |
+| `v1`, `v1.0`, `v1.0.0foo`, `release-v1.0.0` | invalid | fail closed |
+
 ## 1. Release chain
 
 ```text
@@ -17,31 +41,36 @@ bump [workspace.package] version + [workspace.dependencies] versions in Cargo.to
     -> commit
     -> tag vX.Y.Z (must equal the version)
     -> .github/workflows/release.yml
+         classify : scripts/release/classify_tag.sh -> stable | prerelease | invalid
          verify   : fmt / check / clippy / test
-         guard    : tag == workspace version
-         build    : native build + package + smoke + clean-machine, per target
-         publish  : SHA256SUMS + GitHub Release assets
+         guard    : tag == resolved Cargo package version (check_versions.sh)
+         build    : (stable only) native build + version check + package + smoke
+                    + clean-machine, per target
+         publish  : (stable only) SHA256SUMS from final artifacts + GitHub Release
     -> (gated, manual) crates.io publish in dependency order
     -> install.sh resolves vX.Y.Z and verifies the checksum before installing
     -> cargo install pizen-lynx resolves the published 0.2.0 graph
 ```
 
-The tag is the single release trigger. A tag that does not match the workspace
-version fails the `version-guard` job, so version drift cannot be released.
+The tag is the single release trigger. A tag that does not match the resolved
+package version fails the `version-guard` job; an invalid tag fails the
+`classify` job; a prerelease tag runs validation only and can never reach
+`build`/`release`. Version drift cannot be released.
 
 ## 2. Artifact matrix
 
-| Target | Runner | Artifact | Checksum | Status |
+| Target | Runner | Artifact | Checksum | Policy |
 |---|---|---|---|---|
-| macOS arm64 | `macos-14` | `lynx-vX.Y.Z-darwin-arm64.tar.gz` | in `SHA256SUMS` | validated locally |
-| macOS x86_64 | `macos-15-intel` | `lynx-vX.Y.Z-darwin-x86_64.tar.gz` | in `SHA256SUMS` | CI-native |
-| Linux x86_64 | `ubuntu-24.04` | `lynx-vX.Y.Z-linux-x86_64.tar.gz` | in `SHA256SUMS` | CI-native |
-| Linux arm64 | `ubuntu-24.04-arm` | `lynx-vX.Y.Z-linux-arm64.tar.gz` | in `SHA256SUMS` | CI-native |
+| macOS arm64 | `macos-14` | `lynx-vX.Y.Z-darwin-arm64.tar.gz` | in `SHA256SUMS` | REQUIRED (validated locally) |
+| macOS x86_64 | `macos-15-intel` | `lynx-vX.Y.Z-darwin-x86_64.tar.gz` | in `SHA256SUMS` | REQUIRED (CI-native) |
+| Linux x86_64 | `ubuntu-24.04` | `lynx-vX.Y.Z-linux-x86_64.tar.gz` | in `SHA256SUMS` | REQUIRED (CI-native) |
+| Linux arm64 | `ubuntu-24.04-arm` | `lynx-vX.Y.Z-linux-arm64.tar.gz` | in `SHA256SUMS` | REQUIRED (CI-native; runner availability CONDITIONAL) |
 | Windows | — | — | — | **UNSUPPORTED** |
 
 "CI-native" means the target is built and validated natively by the release
 workflow but has not been executed in the environment where this phase was
-developed. The release must not be cut until every matrix job is green.
+developed. A declared target that cannot be built fails the release
+(fail-closed); no partial artifact set is published.
 
 ## 3. crates.io package matrix (publish order)
 
@@ -77,29 +106,40 @@ done
 
 A release is cut only when all of the following hold:
 
-- [ ] Tag `vX.Y.Z` equals `[workspace.package] version`.
+- [ ] Tag classifies as **stable** (`scripts/release/classify_tag.sh`).
+- [ ] Tag `vX.Y.Z` equals the resolved `pizen-lynx` package version.
 - [ ] `[workspace.dependencies]` version requirements equal the release version.
 - [ ] `verify` job green (fmt / check / clippy / test).
 - [ ] Every `build` matrix job green — archive produced.
-- [ ] Native `lx --version` and `lx mcp --check` green on every target.
+- [ ] Native `lx --version` equals the tag version; `lx mcp --check` green on every target.
+- [ ] Each archive contains exactly `lx` at its root.
 - [ ] Native `clean_machine_test.sh` green on every target.
-- [ ] `SHA256SUMS` generated from the published archives.
+- [ ] `SHA256SUMS` generated from the published archives; every archive present.
 - [ ] Release assets present and downloadable.
 - [ ] `install.sh` installs the release on at least one platform and reports the
       expected version.
+- [ ] `tests/distribution/release_test.sh` green (classification + wiring).
 - [ ] `tests/distribution/cargo_install_test.sh` green (registry install of
-      `pizen-lynx`).
+      `pizen-lynx`, single `lx` binary).
 - [ ] Ordered `cargo publish` completed for all seven crates.
 - [ ] `cargo install pizen-lynx` succeeds from a clean environment and
       `lx --version` matches the tag.
 
+A **prerelease** tag (`vX.Y.Z-pre`) cuts nothing: it runs the `verify` job and
+the validation-only build, and stops. It never uploads an artifact or creates a
+GitHub Release.
+
 ## 5. What the release workflow guarantees
 
+- The tag is classified by one shared rule; a prerelease tag cannot reach the
+  `build` or `release` jobs.
 - Archives are built natively on each target (no cross-compilation claims).
 - Failed/skipped targets publish nothing: `release` needs all of `build`, and
   `SHA256SUMS` is generated after the build matrix completes.
+- Each archive contains exactly `lx`; the built binary reports the tag version.
 - CI additionally runs the hermetic installer suite on Linux + macOS on every
-  push and pull request (`ci.yml` → `distribution` job).
+  push and pull request (`ci.yml` → `distribution` job) and the release
+  classification/version guards (`ci.yml` → `release` job).
 - crates.io publication is **not** automated: the boundary must be confirmed and
   the ordered publish run deliberately (see §6).
 
@@ -112,8 +152,11 @@ cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace
 
 cargo build --release -p pizen-lynx
-make dist-test                 # installer suite + clean-machine validation
+make dist-test                 # release classification + installer + clean-machine
 tests/distribution/cargo_install_test.sh   # registry install of pizen-lynx
+
+# Release classification and version guards (the workflow's own logic):
+tests/distribution/release_test.sh
 
 # Exercise the installer against a synthetic release served over loopback:
 tests/distribution/install_test.sh

@@ -11,8 +11,8 @@ categories.workspace = true
 documentation = "https://docs.rs/pizen-lynx-mcp"
 
 # Internal implementation crate (published only to satisfy Cargo; not a public API).
-# The canonical MCP entrypoint is `lx mcp`; the binary is an auxiliary,
-# undeclared entrypoint and is not part of the product surface.
+# Library-only: it declares no binary, so the only product binary is `lx` and the
+# canonical MCP entrypoint is `lx mcp`.
 description = "Internal Model Context Protocol implementation for Lynx (canonical entrypoint: `lx mcp`)."
 
 [dependencies]

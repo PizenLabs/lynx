@@ -15,6 +15,9 @@
 #   LYNX_BASE_URL       Release download base (default: GitHub Releases for LYNX_REPO)
 #   LYNX_DOWNLOAD_DIR   Target dir for --download-only (default: .)
 #   LYNX_ALLOW_INSECURE Explicitly allow http:// for loopback testing only
+#   LYNX_ALLOW_PRERELEASE
+#                       Explicitly allow installing a prerelease tag (testing
+#                       only; stable releases never need this)
 #
 # Usage:
 #   sh install.sh [--help] [--version TAG] [--dir DIR] [--system]
@@ -201,6 +204,25 @@ else
     TAG=$(normalize_tag "$LYNX_VERSION")
 fi
 [ -n "$TAG" ] || err "could not determine a release tag to install"
+
+# --- stable-only guard ------------------------------------------------------
+# The installer consumes only stable production releases. `latest` resolves via
+# GitHub's /releases/latest, which the GitHub API defines as the latest
+# non-prerelease, non-draft release, so it can never pick `-rc`/`-alpha`/`-beta`
+# artifacts. An explicitly requested tag is validated here so a prerelease can
+# never be installed by accident.
+stable_re='^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
+prerelease_re='^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)-[0-9A-Za-z.-]+$'
+if ! printf '%s' "$TAG" | grep -Eq "$stable_re"; then
+    if [ "${LYNX_ALLOW_PRERELEASE:-0}" = "1" ] && printf '%s' "$TAG" | grep -Eq "$prerelease_re"; then
+        info "  warning: installing prerelease ${TAG} (LYNX_ALLOW_PRERELEASE=1)"
+    else
+        err "refusing to install non-stable release: ${TAG}
+  Supported releases are stable vMAJOR.MINOR.PATCH tags only.
+  Prerelease tags (-rc, -alpha, -beta, -dev, ...) do not update the stable
+  release surface. Set LYNX_ALLOW_PRERELEASE=1 only to install one for testing."
+    fi
+fi
 
 ASSET="lynx-${TAG}-${PLATFORM}.tar.gz"
 RELEASE_BASE="${LYNX_BASE_URL}/${TAG}"

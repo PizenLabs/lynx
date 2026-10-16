@@ -7,6 +7,12 @@ name: Publish crates.io
 #
 # Publishing must run in dependency order (a crate cannot be published until its
 # internal dependencies exist on the registry).
+#
+# Before a real publish, `cargo publish --dry-run` must succeed for every package
+# that will actually be published (`cargo publish` itself validates the manifest
+# before uploading, so a crate whose dependencies are not yet resolvable stops
+# the ordered loop). Only the seven packages below are published;
+# `pizen-lynx-common` is dead and is never restored or republished.
 
 on:
   workflow_dispatch:

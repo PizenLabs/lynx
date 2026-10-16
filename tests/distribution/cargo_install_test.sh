@@ -124,11 +124,26 @@ else
     fail "installed binary version mismatch: $("$LX" --version)"
 fi
 
+echo "[single product binary]"
+BINS="$(cd "$WORK/root/bin" && ls -1 | sort | tr '\n' ' ')"
+if [ "$BINS" = "lx " ]; then
+    pass "pizen-lynx installs exactly one binary (lx)"
+else
+    fail "unexpected installed binaries: ${BINS}"
+fi
+
 echo "[doctor]"
 DOCTOR_OUT="$(cd "$WORK" && "$LX" doctor 2>&1)"
 case "$DOCTOR_OUT" in
     *"Lynx Doctor"*) pass "installed binary runs \`lx doctor\`" ;;
     *) fail "doctor failed: $DOCTOR_OUT" ;;
+esac
+
+echo "[mcp --check]"
+MCP_OUT="$(cd "$WORK" && "$LX" mcp --check 2>&1)"
+case "$MCP_OUT" in
+    *"Status       OK"*) pass "installed binary runs \`lx mcp --check\`" ;;
+    *) fail "mcp --check failed: $MCP_OUT" ;;
 esac
 
 echo "[hermeticity]"

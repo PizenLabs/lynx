@@ -216,6 +216,27 @@ HELP="$(sh "$INSTALLER" --help 2>&1)"; HELPSTATUS=$?
 if [ "$HELPSTATUS" -eq 0 ]; then pass "--help exits 0"; else fail "--help exit status $HELPSTATUS"; fi
 case "$HELP" in *"Usage:"*) pass "--help prints usage" ;; *) fail "--help usage missing" ;; esac
 
+# 12. prerelease tags are refused by default
+echo "[prerelease refusal]"
+make_release v1.0.3-rc.1
+run_install "$WORK/bin-pre" --version v1.0.3-rc.1
+if [ "$STATUS" -ne 0 ] && [ ! -e "$WORK/bin-pre/lx" ]; then
+    pass "prerelease tag is refused and installs nothing"
+else
+    fail "prerelease tag was not refused (status=$STATUS)"
+fi
+case "$OUT" in *"refusing to install non-stable release"*) pass "prerelease refusal message is explicit" ;; *) fail "prerelease refusal message missing" ;; esac
+
+# 13. an explicit override still installs a prerelease (testing path)
+echo "[prerelease override]"
+PREOUT="$(LYNX_ALLOW_PRERELEASE=1 LYNX_ALLOW_INSECURE=1 LYNX_BASE_URL="$BASE" sh "$INSTALLER" --dir "$WORK/bin-pre" --version v1.0.3-rc.1 2>&1)"
+PRESTATUS=$?
+if [ "$PRESTATUS" -eq 0 ] && [ "$("$WORK/bin-pre/lx" --version 2>/dev/null)" = "lx 1.0.3-rc.1" ]; then
+    pass "explicit override installs the prerelease for testing"
+else
+    fail "prerelease override (status=$PRESTATUS)"; echo "$PREOUT"
+fi
+
 echo
 if [ "$failures" -eq 0 ]; then
     echo "install_test: all tests passed"
