@@ -2060,7 +2060,7 @@ checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
 
 [[package]]
 name = "pizen-lynx"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "clap",
@@ -2074,7 +2074,7 @@ dependencies = [
 
 [[package]]
 name = "pizen-lynx-core"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "blake3",
  "pizen-lynx-embed",
@@ -2091,7 +2091,7 @@ dependencies = [
 
 [[package]]
 name = "pizen-lynx-embed"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "fastembed",
  "thiserror",
@@ -2099,7 +2099,7 @@ dependencies = [
 
 [[package]]
 name = "pizen-lynx-mcp"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "pizen-lynx-core",
@@ -2112,7 +2112,7 @@ dependencies = [
 
 [[package]]
 name = "pizen-lynx-parser"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "blake3",
  "pizen-lynx-protocol",
@@ -2127,7 +2127,7 @@ dependencies = [
 
 [[package]]
 name = "pizen-lynx-protocol"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -2136,7 +2136,7 @@ dependencies = [
 
 [[package]]
 name = "pizen-lynx-storage"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "pizen-lynx-protocol",
  "rusqlite",
