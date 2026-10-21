@@ -15,7 +15,7 @@ description = "Internal storage layer for Lynx: SQLite graph/vector substrate pl
 
 [dependencies]
 rusqlite = { version = "0.40.2", features = ["bundled"] }
-tantivy = "0.26.1"
+tantivy = "0.27.0"
 thiserror = "2.0.20"
 
 lynx-protocol.workspace = true
