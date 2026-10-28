@@ -28,4 +28,4 @@ lynx-storage.workspace = true
 [dev-dependencies]
 tempfile = "3.27.0"
 serde_json = "1.0"
-rusqlite = { version = "0.40.2", features = ["bundled"] }
+rusqlite = { version = "0.41.0", features = ["bundled"] }
