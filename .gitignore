@@ -34,3 +34,6 @@ __pycache__/
 .fastembed_cache/
 .lynx/
 ireport-issues/
+
+# ohgo runtime state
+.ohgo/
