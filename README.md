@@ -312,15 +312,19 @@ bounded file/module documents.
   in the package, not always first.
 - **Very large repositories** are supported up to the measured envelope;
   semantic retrieval is an exact `O(symbols)` scan (no approximate index).
-- **Resource requirements** are dominated by the embedding model (~250 MB
-  resident). The structural commands (`resolve`, `relations`, `status`,
-  `doctor`, `--version`) never initialize it. `search` and `context` do, even
-  with `--mode lexical`; lexical mode skips the query embedding and vector scan,
-  but the provider is still constructed.
+- **Resource requirements** are dominated by the embedding model (hundreds of MB
+  resident; ≈600 MB measured on the macOS arm64 reference environment) *when it
+  is used*. The structural commands (`resolve`, `relations`, `status`, `doctor`,
+  `--version`) never initialize it. Neither does `search --mode lexical`, nor a
+  no-change `index` pass, because the model is constructed lazily on the first
+  actual embedding call. Semantic/hybrid search and `context` initialize it once
+  per process. On an already-indexed workspace, `lx mcp` starts without it and
+  loads it on the first semantic request; a first-use build still embeds.
 
-Honest, measured numbers are in
-[`docs/architecture/final-product-report.md`](docs/architecture/final-product-report.md)
-and [`docs/architecture/production-readiness.md`](docs/architecture/production-readiness.md).
+Honest, measured numbers are in the
+[2026-10 performance audit](docs/audit/lynx-performance-and-productization-report.md),
+the earlier [final product report](docs/architecture/final-product-report.md),
+and the [production readiness matrix](docs/architecture/production-readiness.md).
 
 ---
 

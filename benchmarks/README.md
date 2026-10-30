@@ -21,10 +21,14 @@ Writes `benchmarks/reports/validation_<timestamp>.txt` containing:
    synthetic Rust repos.
 3. **Lifecycle** — index time/RSS, cold-query latency percentiles, and proof that
    a query answers with the source tree deleted (no re-read, no re-index).
-4. **MCP stress** — 200 sequential calls plus malformed frames, an unknown tool,
+4. **Warm query latency** — p50/p95/p99 for every primitive inside one live MCP
+   server, plus RSS before and after the lazy model load.
+5. **MCP stress** — 200 sequential calls plus malformed frames, an unknown tool,
    a zero timeout, a huge query, and a restart, with latency percentiles and RSS.
-5. **ripgrep baseline** — the same tasks scored with ripgrep and Lynx at the file
+6. **ripgrep baseline** — the same tasks scored with ripgrep and Lynx at the file
    level, for a fair comparison.
+7. **Parser throughput** — the production single-pass parser versus the
+   historical two-pass composition on the same source unit.
 
 ## Layout
 
@@ -39,6 +43,7 @@ benchmarks/
 │   ├── gen_tasks.py        regenerates tasks/ + truth/ from the corpus
 │   ├── run_validation.sh   orchestrates the whole suite
 │   ├── lifecycle_probe.py  index/hydrate/cold-query latency + peak RSS
+│   ├── warm_query_probe.py warm per-primitive latency + lazy-model RSS
 │   ├── mcp_stress.py       sequential + adversarial MCP workload
 │   └── rg_baseline.py      ripgrep-vs-Lynx comparison
 ├── reports/                generated reports (timestamped)
@@ -70,6 +75,12 @@ cargo run --release -p pizen-lynx-core --example validation_suite
 
 # Discovery quality (real embeddings — the numbers that matter)
 LYNX_REAL_EMBED=1 cargo run --release -p pizen-lynx-core --example validation_suite
+
+# Warm per-primitive latency inside one live MCP server
+python3 benchmarks/scripts/warm_query_probe.py target/release/lx benchmarks/corpus/auth-service
+
+# Parser single-pass vs historical two-pass throughput
+cargo run --release -p pizen-lynx-parser --example parser_bench
 
 # Lifecycle / MCP / baseline against a built binary
 cargo build --release -p pizen-lynx

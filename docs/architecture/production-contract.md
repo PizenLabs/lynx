@@ -67,6 +67,7 @@ lx index -> persist .lynx -> process exits -> new process -> hydrate -> query
 | Module snippet | 80 lines (was the whole file) | `MAX_MODULE_SNIPPET_LINES` |
 | Embedding text | 512 chars (128 for modules) | `MAX_EMBED_CHARS` |
 | Lexical writer | one shared `IndexWriter` per index pass (was one per file) | `TantivyStore` |
+| Embedding model | constructed once per process, only on the first actual embedding call; structural, lexical, MCP startup, and no-change indexing never construct it | `LazyFastEmbedProvider` |
 | Trace frontier | bounded by `depth`, visited set | `engine::trace_with` |
 
 There is **no code path whose memory scales with repository size per query**.
@@ -108,18 +109,18 @@ Given `(repository, index, query, configuration)` the logical result is stable:
 
 ## 8. What is explicitly NOT guaranteed (yet)
 
-- **Incremental indexing is not implemented.** Every `lx index` performs a full
-  reset-and-rebuild. A hydrated index cannot detect that the workspace changed;
-  consumers may compare `index_status().snapshot` (`commit_hash`, `is_dirty`,
-  `content_hash`) and re-index. (See `production-readiness.md`.)
-- **Indexing has no hard memory ceiling.** Peak RSS is now flat with repository
-  size (memory is dominated by the ~250 MB ONNX model), but an adversarial
-  repository (e.g. one enormous file) can still spike. For adversarial or
-  arbitrary-untrusted repositories under hard memory ceilings, run indexing in a
-  subprocess with an OS memory limit.
+- **Incremental indexing is bounded but not a file watcher.** `lx index` diffs
+  content hashes and touches only changed files; it does not watch the
+  filesystem or refresh automatically. Consumers decide when to re-index.
+- **Indexing has no hard memory ceiling.** Peak RSS is flat with repository
+  size (memory is dominated by the ONNX model when embeddings are computed —
+  ≈600 MB loaded on the macOS arm64 reference environment), but an adversarial
+  repository (e.g. one enormous file) can still spike. For
+  adversarial or arbitrary-untrusted repositories under hard memory ceilings,
+  run indexing in a subprocess with an OS memory limit.
 - **Relations are intra-file.** Cross-file call/dependency edges are not linked.
 - **Conceptual (flow) queries and context ordering remain weaker** than
-  definition/exact queries: context Hit@5 0.800 but P@1 0.100.
+  definition/exact queries: context Hit@5 0.800 but P@1 0.300.
 - **Very large repositories (500 MB+) and cross-language monorepos are
   unmeasured.**
 

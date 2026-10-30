@@ -61,6 +61,18 @@ const MAX_EMBED_CHARS: usize = 512;
 /// Snippet characters fed to the model for a module pseudo-symbol.
 const MAX_MODULE_EMBED_CHARS: usize = 128;
 
+/// Maximum number of texts sent to the provider in one embedding call.
+///
+/// A dense file can declare hundreds of symbols. Passing all of them as one
+/// batch makes the runtime pad every member to the longest text and allocate
+/// attention buffers for `batch × sequence²`; indexing this repository with
+/// per-file batches peaked at 31 GB and was killed. A fixed small batch also
+/// keeps the runtime's allocation shapes predictable across files, which
+/// measurably lowers the cumulative arena (2.3 GB versus 4.7 GB for a
+/// mixed-strategy batch). The cost is ≈11 % more full-index wall time on the
+/// synthetic 200-file workspace; incremental work is unaffected.
+const MAX_EMBED_BATCH: usize = 4;
+
 /// Per-channel candidate bound: `search` fuses at most this many lexical and
 /// semantic candidates, so per-query memory is `O(candidate_limit)` rather than
 /// `O(symbols)`. Scaled from the requested `limit` and clamped.
@@ -343,10 +355,13 @@ impl Engine {
         repo_path: &Path,
         include_tests: bool,
     ) -> Result<IndexUpdate, CoreError> {
-        let snapshot = resolve_snapshot(repo_path)?;
+        // Hash the workspace exactly once. The scan already yields a digest per
+        // file, so the snapshot identity is derived from those digests instead
+        // of reading every file a second time for a separate tree hash.
+        let current = scan_workspace(repo_path, include_tests)?;
+        let snapshot = resolve_snapshot(repo_path, &current)?;
         self.dual.graph().save_snapshot(&snapshot)?;
 
-        let current = scan_workspace(repo_path, include_tests)?;
         let plan = self.diff_plan(&current)?;
 
         // Delete first (in opstamp order), so a re-added file replaces its old
@@ -358,9 +373,15 @@ impl Engine {
             self.dual.lexical().delete_by_file_paths(&remove)?;
         }
 
+        let changed_paths: HashSet<&str> = plan
+            .added
+            .iter()
+            .chain(plan.modified.iter())
+            .map(String::as_str)
+            .collect();
         let mut changed: Vec<&(String, String)> = current
             .iter()
-            .filter(|(path, _)| plan.added.contains(path) || plan.modified.contains(path))
+            .filter(|(path, _)| changed_paths.contains(path.as_str()))
             .collect();
         changed.sort_by(|a, b| a.0.cmp(&b.0));
         for (path, _) in changed {
@@ -460,8 +481,11 @@ impl Engine {
             .iter()
             .map(|(identity, _, snippet)| embedding_text(identity, snippet))
             .collect();
-        let text_refs: Vec<&str> = texts.iter().map(String::as_str).collect();
-        let vectors = self.provider.embed_batch(&text_refs)?;
+        let mut vectors: Vec<Vec<f32>> = Vec::with_capacity(texts.len());
+        for chunk in texts.chunks(MAX_EMBED_BATCH) {
+            let refs: Vec<&str> = chunk.iter().map(String::as_str).collect();
+            vectors.extend(self.provider.embed_batch(&refs)?);
+        }
         let embedding_items: Vec<(String, Vec<f32>)> = file_identities
             .iter()
             .map(|(identity, _, _)| identity.content_hash.clone())
@@ -834,17 +858,7 @@ impl Engine {
             }
             return Ok(Vec::new());
         }
-        matches.sort_by(|a, b| {
-            let key = |(identity, _): &(SymbolIdentity, SourceRange)| {
-                (
-                    usize::from(identity.fqdn != needle),
-                    noise_rank(&identity.file_path),
-                    identity.fqdn.clone(),
-                    identity.content_hash.clone(),
-                )
-            };
-            key(a).cmp(&key(b))
-        });
+        matches.sort_by(|a, b| match_key(a, needle).cmp(&match_key(b, needle)));
         Ok(matches)
     }
 
@@ -1074,6 +1088,22 @@ impl Engine {
     }
 }
 
+/// Deterministic ordering key for an exact-resolution match.
+///
+/// Borrows the identity's strings; comparing keys must not clone them, because
+/// a common trailing name can produce many matches.
+fn match_key<'a>(
+    (identity, _): &'a (SymbolIdentity, SourceRange),
+    needle: &str,
+) -> (usize, u8, &'a str, &'a str) {
+    (
+        usize::from(identity.fqdn != needle),
+        noise_rank(&identity.file_path),
+        identity.fqdn.as_str(),
+        identity.content_hash.as_str(),
+    )
+}
+
 /// An empty workspace snapshot.
 fn empty_snapshot() -> Snapshot {
     Snapshot {
@@ -1095,13 +1125,13 @@ fn parse_capability(value: &str) -> Option<CapabilityLevel> {
     }
 }
 
-/// Resolves workspace provenance from git.
-fn resolve_snapshot(repo_path: &Path) -> Result<Snapshot, CoreError> {
+/// Resolves workspace provenance from git and the scanned file digests.
+fn resolve_snapshot(repo_path: &Path, files: &[(String, String)]) -> Result<Snapshot, CoreError> {
     let commit_hash = run_git(repo_path, &["rev-parse", "HEAD"]);
     let is_dirty = run_git(repo_path, &["status", "--porcelain"])
         .map(|output| !output.trim().is_empty())
         .unwrap_or(false);
-    let content_hash = tree_hash(repo_path);
+    let content_hash = workspace_hash(files);
     Ok(Snapshot {
         commit_hash,
         workspace_root: repo_path.to_path_buf(),
@@ -1121,30 +1151,19 @@ fn run_git(repo_path: &Path, args: &[&str]) -> Option<String> {
         .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
-/// Deterministic content hash over every regular file under `repo_path`,
-/// ignoring excluded segments.
-fn tree_hash(repo_path: &Path) -> String {
+/// Deterministic content hash over the scanned workspace.
+///
+/// `files` is already sorted by path and holds each indexable file's content
+/// digest, so folding it into one digest identifies the exact workspace state
+/// without re-reading any file. Excluded paths are omitted consistently from
+/// both the scan and this digest.
+fn workspace_hash(files: &[(String, String)]) -> String {
     let mut hasher = blake3::Hasher::new();
-    let mut paths: Vec<PathBuf> = WalkDir::new(repo_path)
-        .into_iter()
-        .filter_map(Result::ok)
-        .filter(|entry| entry.file_type().is_file())
-        .filter(|entry| {
-            !should_skip(
-                entry.path().strip_prefix(repo_path).unwrap_or(entry.path()),
-                false,
-            )
-        })
-        .map(|entry| entry.into_path())
-        .collect();
-    paths.sort();
-    for path in paths {
-        let relative = path.strip_prefix(repo_path).unwrap_or(&path);
-        if let Ok(bytes) = std::fs::read(&path) {
-            hasher.update(relative.to_string_lossy().as_bytes());
-            hasher.update(&[0]);
-            hasher.update(&bytes);
-        }
+    for (path, content_hash) in files {
+        hasher.update(path.as_bytes());
+        hasher.update(&[0]);
+        hasher.update(content_hash.as_bytes());
+        hasher.update(&[0]);
     }
     hasher.finalize().to_hex().to_string()
 }
@@ -1506,6 +1525,55 @@ mod tests {
         let path = dir.join(name);
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(path, content).unwrap();
+    }
+
+    /// Records the size of every embedding batch so a test can prove batching
+    /// is bounded even for a dense file.
+    struct BatchRecordingProvider(std::sync::Arc<std::sync::Mutex<Vec<usize>>>);
+
+    impl VectorProvider for BatchRecordingProvider {
+        fn embed_query(&self, text: &str) -> Result<Vec<f32>, EmbedError> {
+            Ok(fake_vec(text))
+        }
+        fn embed_batch(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>, EmbedError> {
+            self.0.lock().unwrap().push(texts.len());
+            Ok(texts.iter().map(|t| fake_vec(t)).collect())
+        }
+        fn dimension(&self) -> usize {
+            8
+        }
+    }
+
+    #[test]
+    fn dense_file_embeddings_are_bounded_in_batches() {
+        let ws = temp_root();
+        let mut source = String::new();
+        for index in 0..70 {
+            source.push_str(&format!(
+                "pub fn func_{index}(x: i64) -> i64 {{ x + {index} }}\n"
+            ));
+        }
+        write_file(ws.path(), "dense.rs", &source);
+        let storage = temp_root();
+        let batches = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let engine = Engine::new(
+            storage.path(),
+            Box::new(BatchRecordingProvider(batches.clone())),
+        )
+        .unwrap();
+        engine.index_repository(ws.path(), false).unwrap();
+
+        let sizes = batches.lock().unwrap().clone();
+        assert!(!sizes.is_empty());
+        assert!(
+            sizes.iter().all(|size| *size <= MAX_EMBED_BATCH),
+            "unbounded embedding batch: {sizes:?}"
+        );
+        assert_eq!(
+            sizes.iter().sum::<usize>(),
+            engine.index_status().symbol_count,
+            "every symbol must still be embedded exactly once"
+        );
     }
 
     fn indexed_engine() -> (tempfile::TempDir, tempfile::TempDir, Engine) {

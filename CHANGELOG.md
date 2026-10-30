@@ -16,11 +16,24 @@ serialized wire form is versioned by `pizen-lynx-protocol`.
 - A documentation hub and new user guides: getting started, concepts,
   troubleshooting, and FAQ.
 - `scripts/docs/check_links.py`, a relative-link checker run in CI.
+- A warm-query MCP probe and a parser single-pass benchmark.
+- A measured [performance and productization audit](docs/audit/lynx-performance-and-productization-report.md).
 
 ### Changed
 
 - Each crate now has a crate-specific README instead of a copy of the product
   README. The internal crates clearly state that they are not a public API.
+- The embedding model is constructed lazily on the first embedding call.
+  Structural commands, lexical search, no-change indexing, and MCP startup on an
+  existing index no longer load it.
+- Indexing reads the workspace once, parses each file once, uses prepared
+  statements and linear-time change selection, and resolves git provenance
+  without a subprocess on the common path.
+- Lexical search expands camelCase and snake_case identifiers.
+- Embedding batches are bounded, preventing dense-file memory blow-ups.
+- **Index format:** the graph schema is now 4 and the lexical schema 2. Existing
+  indexes report `incompatible`; run `lx index` (or `lx index --force`) once to
+  rebuild. This does not change the serialized protocol.
 
 ### Fixed
 
@@ -28,6 +41,7 @@ serialized wire form is versioned by `pizen-lynx-protocol`.
   versions.
 - The macOS Intel note no longer suggests a source build, which is not possible
   without an upstream ONNX Runtime x86_64 macOS build.
+- No-change and deletion-only index passes no longer pay the model-load cost.
 
 ## [0.2.1] - 2026-10-17
 
