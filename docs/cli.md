@@ -81,6 +81,9 @@ re-scan and prints counts only.
 
 Hybrid (default) BM25 + embedding search fused by reciprocal rank fusion.
 `--explain` prints the query report and per-result ranking contributions.
+`--mode lexical` is model-free: it never constructs the embedding provider.
+`--mode semantic` and `--mode hybrid` load the model once on first use; in a
+one-shot `lx` process that cost is paid on the first semantic query.
 `--mode structural` only resolves a bare/qualified symbol name and returns no
 candidates for natural-language input; use `lx resolve` and `lx relations` for
 deterministic structural access.

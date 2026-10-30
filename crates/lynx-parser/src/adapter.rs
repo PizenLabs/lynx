@@ -61,6 +61,24 @@ pub trait LanguageAdapter: Send + Sync {
         Ok(None)
     }
 
+    /// Extracts symbols and intra-file relations in one adapter pass.
+    ///
+    /// Grammar-backed adapters override this to parse and analyze the source
+    /// exactly once; the default is the correct (if slower) composition for
+    /// adapters without their own tree.
+    fn parse_all(
+        &self,
+        source: &str,
+        file_path: &Path,
+    ) -> Result<(Vec<SymbolIdentity>, Vec<Relation>), ParseError> {
+        let symbols = self.parse_symbols(source, file_path)?;
+        let relations = match self.new_tree(source)? {
+            Some(tree) => self.extract_relations(source, &tree, &symbols)?,
+            None => Vec::new(),
+        };
+        Ok((symbols, relations))
+    }
+
     /// Extracts intra-file relations among `symbols` from the parsed `tree`.
     fn extract_relations(
         &self,
@@ -330,11 +348,11 @@ fn resolve_contains(
     prefix: &str,
     raws: &[RawSymbol],
     module_hash: &str,
-    requests: Vec<(ContainerKey, usize)>,
+    requests: &[(ContainerKey, usize)],
 ) -> Vec<Relation> {
     let mut relations = Vec::new();
     for (key, member_index) in requests {
-        let container_hash = match &key {
+        let container_hash = match key {
             ContainerKey::Module => Some(module_hash.to_string()),
             ContainerKey::Type(name) => find_raw(prefix, raws, name, &[SymbolKind::Class])
                 .or_else(|| find_raw(prefix, raws, name, &[SymbolKind::Struct]))
@@ -346,7 +364,7 @@ fn resolve_contains(
                 .map(|index| raws[index].hash.clone()),
         };
         if let Some(hash) = container_hash {
-            relations.push(contains_edge(&hash, &raws[member_index].hash));
+            relations.push(contains_edge(&hash, &raws[*member_index].hash));
         }
     }
     sort_and_dedup(relations)
@@ -747,6 +765,18 @@ impl LanguageAdapter for RustAdapter {
         ))
     }
 
+    fn parse_all(
+        &self,
+        source: &str,
+        file_path: &Path,
+    ) -> Result<(Vec<SymbolIdentity>, Vec<Relation>), ParseError> {
+        let tree = rust_tree(source)?;
+        let analysis = analyze_rust(&tree, source, file_path)?;
+        let symbols = symbol_identities(Language::Rust, file_path, source, &analysis.raws);
+        let relations = rust_relations(&analysis, &tree, source, file_path)?;
+        Ok((symbols, relations))
+    }
+
     fn extract_relations(
         &self,
         source: &str,
@@ -758,22 +788,32 @@ impl LanguageAdapter for RustAdapter {
         };
         let path = first.file_path.as_path();
         let analysis = analyze_rust(tree, source, path)?;
-        let module_hash = hash_identity(path, &module_prefix(path), source);
-        let contains = resolve_contains(
-            &module_prefix(path),
-            &analysis.raws,
-            &module_hash,
-            analysis.container_requests,
-        );
-        let implements = rust_implements(tree, source, path, &analysis.raws)?;
-        let calls = resolve_calls(&analysis.raws, &analysis.calls);
-        Ok(sort_and_dedup({
-            let mut all = contains;
-            all.extend(implements);
-            all.extend(calls);
-            all
-        }))
+        rust_relations(&analysis, tree, source, path)
     }
+}
+
+/// Builds the intra-file relation set from an already-computed analysis.
+fn rust_relations(
+    analysis: &RustAnalysis,
+    tree: &Tree,
+    source: &str,
+    path: &Path,
+) -> Result<Vec<Relation>, ParseError> {
+    let module_hash = hash_identity(path, &module_prefix(path), source);
+    let contains = resolve_contains(
+        &module_prefix(path),
+        &analysis.raws,
+        &module_hash,
+        &analysis.container_requests,
+    );
+    let implements = rust_implements(tree, source, path, &analysis.raws)?;
+    let calls = resolve_calls(&analysis.raws, &analysis.calls);
+    Ok(sort_and_dedup({
+        let mut all = contains;
+        all.extend(implements);
+        all.extend(calls);
+        all
+    }))
 }
 
 // ---------------------------------------------------------------------------
@@ -1012,6 +1052,18 @@ impl LanguageAdapter for GoAdapter {
         ))
     }
 
+    fn parse_all(
+        &self,
+        source: &str,
+        file_path: &Path,
+    ) -> Result<(Vec<SymbolIdentity>, Vec<Relation>), ParseError> {
+        let tree = go_tree(source)?;
+        let analysis = analyze_go(&tree, source, file_path)?;
+        let symbols = symbol_identities(Language::Go, file_path, source, &analysis.raws);
+        let relations = go_relations(&analysis, source, file_path);
+        Ok((symbols, relations))
+    }
+
     fn extract_relations(
         &self,
         source: &str,
@@ -1023,22 +1075,27 @@ impl LanguageAdapter for GoAdapter {
         };
         let path = first.file_path.as_path();
         let analysis = analyze_go(tree, source, path)?;
-        let module_hash = hash_identity(path, &module_prefix(path), source);
-        let implements = go_implements(&analysis, &analysis.raws);
-        let calls = resolve_calls(&analysis.raws, &analysis.calls);
-        let contains = resolve_contains(
-            &analysis.package,
-            &analysis.raws,
-            &module_hash,
-            analysis.container_requests,
-        );
-        Ok(sort_and_dedup({
-            let mut all = contains;
-            all.extend(implements);
-            all.extend(calls);
-            all
-        }))
+        Ok(go_relations(&analysis, source, path))
     }
+}
+
+/// Builds the intra-file Go relation set from an already-computed analysis.
+fn go_relations(analysis: &GoAnalysis, source: &str, path: &Path) -> Vec<Relation> {
+    let module_hash = hash_identity(path, &module_prefix(path), source);
+    let implements = go_implements(analysis, &analysis.raws);
+    let calls = resolve_calls(&analysis.raws, &analysis.calls);
+    let contains = resolve_contains(
+        &analysis.package,
+        &analysis.raws,
+        &module_hash,
+        &analysis.container_requests,
+    );
+    sort_and_dedup({
+        let mut all = contains;
+        all.extend(implements);
+        all.extend(calls);
+        all
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -1338,6 +1395,18 @@ impl LanguageAdapter for TypeScriptAdapter {
         ))
     }
 
+    fn parse_all(
+        &self,
+        source: &str,
+        file_path: &Path,
+    ) -> Result<(Vec<SymbolIdentity>, Vec<Relation>), ParseError> {
+        let tree = ts_family_tree(TsFamily::TypeScript, source)?;
+        let analysis = analyze_ts_family(TsFamily::TypeScript, &tree, source, file_path)?;
+        let symbols = symbol_identities(Language::TypeScript, file_path, source, &analysis.raws);
+        let relations = ts_relations(&analysis, &tree, source, file_path, true)?;
+        Ok((symbols, relations))
+    }
+
     fn extract_relations(
         &self,
         source: &str,
@@ -1349,22 +1418,37 @@ impl LanguageAdapter for TypeScriptAdapter {
         };
         let path = first.file_path.as_path();
         let analysis = analyze_ts_family(TsFamily::TypeScript, tree, source, path)?;
-        let module_hash = hash_identity(path, &module_prefix(path), source);
-        let contains = resolve_contains(
-            &module_prefix(path),
-            &analysis.raws,
-            &module_hash,
-            analysis.container_requests,
-        );
-        let implements = ts_implements(tree, source, path, &analysis.raws)?;
-        let calls = resolve_calls(&analysis.raws, &analysis.calls);
-        Ok(sort_and_dedup({
-            let mut all = contains;
-            all.extend(implements);
-            all.extend(calls);
-            all
-        }))
+        ts_relations(&analysis, tree, source, path, true)
     }
+}
+
+/// Builds the intra-file TS/JS relation set from an already-computed analysis.
+fn ts_relations(
+    analysis: &TsFamilyAnalysis,
+    tree: &Tree,
+    source: &str,
+    path: &Path,
+    include_implements: bool,
+) -> Result<Vec<Relation>, ParseError> {
+    let module_hash = hash_identity(path, &module_prefix(path), source);
+    let contains = resolve_contains(
+        &module_prefix(path),
+        &analysis.raws,
+        &module_hash,
+        &analysis.container_requests,
+    );
+    let implements = if include_implements {
+        ts_implements(tree, source, path, &analysis.raws)?
+    } else {
+        Vec::new()
+    };
+    let calls = resolve_calls(&analysis.raws, &analysis.calls);
+    Ok(sort_and_dedup({
+        let mut all = contains;
+        all.extend(implements);
+        all.extend(calls);
+        all
+    }))
 }
 
 /// JavaScript adapter: shares the TypeScript-family extractor but reports
@@ -1401,6 +1485,18 @@ impl LanguageAdapter for JavaScriptAdapter {
         ))
     }
 
+    fn parse_all(
+        &self,
+        source: &str,
+        file_path: &Path,
+    ) -> Result<(Vec<SymbolIdentity>, Vec<Relation>), ParseError> {
+        let tree = ts_family_tree(TsFamily::JavaScript, source)?;
+        let analysis = analyze_ts_family(TsFamily::JavaScript, &tree, source, file_path)?;
+        let symbols = symbol_identities(Language::JavaScript, file_path, source, &analysis.raws);
+        let relations = ts_relations(&analysis, &tree, source, file_path, false)?;
+        Ok((symbols, relations))
+    }
+
     fn extract_relations(
         &self,
         source: &str,
@@ -1412,19 +1508,7 @@ impl LanguageAdapter for JavaScriptAdapter {
         };
         let path = first.file_path.as_path();
         let analysis = analyze_ts_family(TsFamily::JavaScript, tree, source, path)?;
-        let module_hash = hash_identity(path, &module_prefix(path), source);
-        let contains = resolve_contains(
-            &module_prefix(path),
-            &analysis.raws,
-            &module_hash,
-            analysis.container_requests,
-        );
-        let calls = resolve_calls(&analysis.raws, &analysis.calls);
-        Ok(sort_and_dedup({
-            let mut all = contains;
-            all.extend(calls);
-            all
-        }))
+        ts_relations(&analysis, tree, source, path, false)
     }
 }
 
@@ -1610,6 +1694,18 @@ impl LanguageAdapter for PythonAdapter {
         ))
     }
 
+    fn parse_all(
+        &self,
+        source: &str,
+        file_path: &Path,
+    ) -> Result<(Vec<SymbolIdentity>, Vec<Relation>), ParseError> {
+        let tree = py_tree(source)?;
+        let analysis = analyze_py(&tree, source, file_path)?;
+        let symbols = symbol_identities(Language::Python, file_path, source, &analysis.raws);
+        let relations = py_relations(&analysis, source, file_path);
+        Ok((symbols, relations))
+    }
+
     fn extract_relations(
         &self,
         source: &str,
@@ -1621,20 +1717,25 @@ impl LanguageAdapter for PythonAdapter {
         };
         let path = first.file_path.as_path();
         let analysis = analyze_py(tree, source, path)?;
-        let module_hash = hash_identity(path, &module_prefix(path), source);
-        let contains = resolve_contains(
-            &module_prefix(path),
-            &analysis.raws,
-            &module_hash,
-            analysis.container_requests,
-        );
-        let calls = resolve_calls(&analysis.raws, &analysis.calls);
-        Ok(sort_and_dedup({
-            let mut all = contains;
-            all.extend(calls);
-            all
-        }))
+        Ok(py_relations(&analysis, source, path))
     }
+}
+
+/// Builds the intra-file Python relation set from an already-computed analysis.
+fn py_relations(analysis: &PyAnalysis, source: &str, path: &Path) -> Vec<Relation> {
+    let module_hash = hash_identity(path, &module_prefix(path), source);
+    let contains = resolve_contains(
+        &module_prefix(path),
+        &analysis.raws,
+        &module_hash,
+        &analysis.container_requests,
+    );
+    let calls = resolve_calls(&analysis.raws, &analysis.calls);
+    sort_and_dedup({
+        let mut all = contains;
+        all.extend(calls);
+        all
+    })
 }
 
 // ---------------------------------------------------------------------------

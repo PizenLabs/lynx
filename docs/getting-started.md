@@ -81,8 +81,9 @@ lx index
 ```
 
 The first run downloads the embedding model once into
-`$HOME/.cache/lynx/fastembed` (roughly 250 MB resident when loaded) and builds
-the persistent index at `<repository>/.lynx`:
+`$HOME/.cache/lynx/fastembed` (hundreds of MB resident when loaded; ≈600 MB peak
+on the macOS arm64 reference environment) and builds the persistent index at
+`<repository>/.lynx`:
 
 ```text
 .lynx/

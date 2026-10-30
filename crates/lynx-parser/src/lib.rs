@@ -96,13 +96,7 @@ impl Parser {
         path: &Path,
         source: &str,
     ) -> Result<(Vec<SymbolIdentity>, Vec<Relation>), ParseError> {
-        let adapter = adapter_for_path(path);
-        let symbols = adapter.parse_symbols(source, path)?;
-        let relations = match adapter.new_tree(source) {
-            Ok(Some(tree)) => adapter.extract_relations(source, &tree, &symbols)?,
-            _ => Vec::new(),
-        };
-        Ok((symbols, relations))
+        adapter_for_path(path).parse_all(source, path)
     }
 }
 
@@ -110,6 +104,7 @@ impl Parser {
 mod tests {
     use super::{language_for_path, Parser};
     use lynx_protocol::{Language, RelationKind, SymbolKind};
+    use std::path::Path;
 
     #[test]
     fn routes_extensions_to_languages() {
@@ -195,6 +190,45 @@ class Service:
         assert_eq!(symbols.len(), 1);
         assert_eq!(symbols[0].kind, SymbolKind::Module);
         assert!(relations.is_empty());
+    }
+
+    #[test]
+    fn parse_all_matches_the_two_pass_composition() {
+        // `parse_all` must be observationally identical to the explicit
+        // parse_symbols + new_tree + extract_relations composition; it only
+        // avoids parsing and analyzing the source twice.
+        let cases: &[(&str, &str)] = &[
+            (
+                "src/main.rs",
+                "struct Greeter;\nimpl Greeter { fn greet(&self) -> String { String::from(\"hi\") } }\nfn entry() { let g = Greeter; }\n",
+            ),
+            (
+                "auth/user.go",
+                "package auth\n\ntype User struct { Name string }\n\nfunc (u *User) Name() string { return u.Name }\n\nfunc Validate(u *User) bool { return u.Name() != \"\" }\n",
+            ),
+            (
+                "web/session.ts",
+                "class Session { start() { return this; } }\nfunction createSession() { return new Session(); }\n",
+            ),
+            (
+                "web/login.js",
+                "class Login { run() { return helper(); } }\nfunction helper() { return 1; }\n",
+            ),
+            (
+                "service.py",
+                "class Service:\n    def run(self):\n        return helper()\n\ndef helper():\n    return 1\n",
+            ),
+        ];
+
+        for (path, source) in cases {
+            let adapter = super::adapter_for_path(Path::new(path));
+            let symbols = adapter.parse_symbols(source, Path::new(path)).unwrap();
+            let tree = adapter.new_tree(source).unwrap().unwrap();
+            let relations = adapter.extract_relations(source, &tree, &symbols).unwrap();
+            let (all_symbols, all_relations) = adapter.parse_all(source, Path::new(path)).unwrap();
+            assert_eq!(all_symbols, symbols, "symbols differ for {path}");
+            assert_eq!(all_relations, relations, "relations differ for {path}");
+        }
     }
 
     #[test]

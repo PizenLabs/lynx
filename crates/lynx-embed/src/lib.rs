@@ -20,9 +20,11 @@
 
 pub mod error;
 pub mod fastembed;
+pub mod lazy;
 
 pub use error::EmbedError;
 pub use fastembed::FastEmbedProvider;
+pub use lazy::LazyFastEmbedProvider;
 
 /// A provider of dense text embeddings.
 ///
