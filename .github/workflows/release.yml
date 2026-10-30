@@ -204,11 +204,11 @@ jobs:
     if: needs.classify.outputs.kind == 'stable'
     runs-on: ubuntu-24.04
     steps:
-      # Required: `gh release create` shells out to git to resolve the repository
-      # and `--verify-tag` needs the tag to exist in a local clone. Without a
-      # checkout this job has no .git directory and fails with
+      # Required: the gh release command shells out to git to resolve the
+      # repository, and --verify-tag needs the tag to exist in a local clone.
+      # Without a checkout this job has no .git directory and fails with
       # "failed to run git: fatal: not a git repository".
-      # fetch-depth: 0 fetches all tags so `--verify-tag` can see the pushed tag.
+      # fetch-depth: 0 fetches all tags so --verify-tag can see the pushed tag.
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
