@@ -13,8 +13,8 @@ authors:
 repository-code: "https://github.com/PizenLabs/lynx"
 url: "https://github.com/PizenLabs/lynx"
 license: MIT
-version: "0.2.1"
-date-released: "2026-10-17"
+version: "0.2.2"
+date-released: "2026-10-30"
 keywords:
   - repository intelligence
   - code search

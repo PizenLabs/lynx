@@ -46,7 +46,7 @@ The installer refuses prereleases by default. If you are intentionally testing
 one, set `LYNX_ALLOW_PRERELEASE=1`. For a specific stable release:
 
 ```bash
-LYNX_VERSION=v0.2.1 sh install.sh
+LYNX_VERSION=v0.2.2 sh install.sh
 ```
 
 If the download fails behind a proxy or a GitHub rate limit, retry later, use

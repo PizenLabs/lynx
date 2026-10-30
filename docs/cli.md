@@ -44,7 +44,7 @@ contract. It never indexes and never loads the model (≈37 ms).
 Lynx Doctor
 
 Binary       OK
-Version      0.2.1
+Version      0.2.2
 Platform     macOS arm64
 Install      /Users/you/.local/bin/lx
 Workspace    /Users/you/project

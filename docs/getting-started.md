@@ -34,7 +34,7 @@ it:
 ```bash
 sh install.sh --help
 sh install.sh --dir "$HOME/bin"
-LYNX_VERSION=v0.2.1 sh install.sh
+LYNX_VERSION=v0.2.2 sh install.sh
 sh install.sh --download-only=/tmp
 ```
 

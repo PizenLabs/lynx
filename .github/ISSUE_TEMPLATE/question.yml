@@ -32,7 +32,7 @@ body:
     id: version
     attributes:
       label: Lynx version and platform
-      placeholder: "lx 0.2.1, macOS 15 arm64"
+      placeholder: "lx 0.2.2, macOS 15 arm64"
     validations:
       required: false
 

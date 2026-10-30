@@ -142,7 +142,7 @@ Inspect or control it without executing:
 ```bash
 sh install.sh --help                 # usage
 sh install.sh --download-only=/tmp   # download + verify only, install nothing
-LYNX_VERSION=v0.2.1 sh install.sh    # pin a release
+LYNX_VERSION=v0.2.2 sh install.sh    # pin a release
 sh install.sh --dir "$HOME/bin"      # choose the install directory
 sh install.sh --system               # explicit /usr/local/bin install (may need sudo)
 ```
