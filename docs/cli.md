@@ -1,5 +1,8 @@
 # Lynx CLI reference (`lx`)
 
+> Part of the [Lynx documentation](README.md). New here? Start with
+> [Getting started](getting-started.md).
+
 `lx` is the command-line transport over the Lynx repository-intelligence
 surface. Retrieval subcommands **hydrate** the persistent index at
 `<repo>/.lynx`; only `lx index` writes it.
@@ -41,7 +44,7 @@ contract. It never indexes and never loads the model (≈37 ms).
 Lynx Doctor
 
 Binary       OK
-Version      0.2.0
+Version      0.2.1
 Platform     macOS arm64
 Install      /Users/you/.local/bin/lx
 Workspace    /Users/you/project
@@ -78,6 +81,9 @@ re-scan and prints counts only.
 
 Hybrid (default) BM25 + embedding search fused by reciprocal rank fusion.
 `--explain` prints the query report and per-result ranking contributions.
+`--mode structural` only resolves a bare/qualified symbol name and returns no
+candidates for natural-language input; use `lx resolve` and `lx relations` for
+deterministic structural access.
 
 ### `lx resolve <NAME>`
 
@@ -111,6 +117,8 @@ smoke test and exits.
 | Variable | Effect |
 |---|---|
 | `LYNX_INCLUDE_TESTS=1` | include test/mock/generated files in a freshly built index (`lx index`, `lx mcp`) |
+| `HOME` | cache root for embedding-model weights (`$HOME/.cache/lynx/fastembed`); when unset, the system temporary directory is used |
 
-Lynx reads no other environment variables. There is no global configuration file
-and no product-specific repository marker.
+There is no global configuration file and no product-specific repository
+marker. The installer has its own variables (`LYNX_VERSION`,
+`LYNX_INSTALL_DIR`, and others); see `sh install.sh --help`.

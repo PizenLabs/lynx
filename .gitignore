@@ -37,3 +37,6 @@ ireport-issues/
 
 # ohgo runtime state
 .ohgo/
+
+# Keep the project changelog tracked even when a global ignore rule hides it.
+!CHANGELOG.md

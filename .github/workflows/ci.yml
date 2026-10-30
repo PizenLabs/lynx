@@ -25,6 +25,15 @@ jobs:
       - name: Clippy
         run: cargo clippy --all-targets -- -D warnings
 
+  docs:
+    name: Markdown links
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Check relative links and anchors
+        run: python3 scripts/docs/check_links.py
+
   test:
     name: Rust tests
     runs-on: ubuntu-latest

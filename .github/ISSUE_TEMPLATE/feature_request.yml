@@ -1,0 +1,83 @@
+name: Feature request
+description: Propose a capability, retrieval improvement, or integration.
+title: "feat: "
+labels: ["enhancement", "needs triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Lynx is deliberately narrow: it discovers repository evidence and lets
+        the consumer decide. Proposals that add planning, editing, or agent
+        behaviour are usually out of scope. Explain the problem first.
+
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Preflight
+      options:
+        - label: I searched existing issues and the documentation.
+          required: true
+        - label: This is a product or developer-experience request, not a security report.
+          required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What can you not do today, and who is affected?
+      placeholder: "As an agent/IDE/automation author, I need ... because ..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: Describe the smallest change that solves the problem.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Existing commands, workarounds, or other designs.
+    validations:
+      required: false
+
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Affected surface
+      options:
+        - CLI (`lx`)
+        - MCP server (`lx mcp`)
+        - Retrieval quality / ranking
+        - Parsing / language support
+        - Indexing / storage
+        - Installer / distribution
+        - Documentation
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence or benchmark
+      description: >-
+        For retrieval or performance changes, include a grounded example and,
+        where possible, before/after metrics. Claims without a reproducible
+        measurement are hard to accept.
+    validations:
+      required: false
+
+  - type: textarea
+    id: compatibility
+    attributes:
+      label: Compatibility impact
+      description: >-
+        Would this change the CLI output, MCP tools, wire contracts, or index
+        format? Say so explicitly.
+    validations:
+      required: false

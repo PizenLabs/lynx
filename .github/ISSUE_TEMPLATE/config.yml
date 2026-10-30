@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Documentation
+    url: https://github.com/PizenLabs/lynx/blob/main/docs/README.md
+    about: Install, CLI, MCP, concepts, troubleshooting, and FAQ.
+  - name: Security report
+    url: https://github.com/PizenLabs/lynx/security/advisories/new
+    about: Report vulnerabilities privately. Never open a public issue for a security problem.
+  - name: Contributing guide
+    url: https://github.com/PizenLabs/lynx/blob/main/CONTRIBUTING.md
+    about: Development setup, quality gates, and pull-request expectations.

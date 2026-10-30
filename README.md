@@ -9,8 +9,11 @@
 **Lynx discovers. Consumers decide.**
 
 [![CI](https://github.com/PizenLabs/lynx/actions/workflows/ci.yml/badge.svg)](https://github.com/PizenLabs/lynx/actions)
+[![crates.io](https://img.shields.io/crates/v/pizen-lynx.svg?style=flat-square)](https://crates.io/crates/pizen-lynx)
+[![docs.rs](https://img.shields.io/docsrs/pizen-lynx?style=flat-square)](https://docs.rs/pizen-lynx)
 [![License](https://img.shields.io/badge/license-MIT-blue?style=flat-square)](./LICENSE)
 
+[Documentation](docs/README.md) •
 [Install](#install) •
 [First repository](#first-repository) •
 [MCP](#connect-an-agent-mcp) •
@@ -18,7 +21,8 @@
 [Platforms](#supported-platforms) •
 [Releases](#releases) •
 [Limits](#resource-and-support-envelope) •
-[Architecture](#architecture)
+[Architecture](#architecture) •
+[Contributing](CONTRIBUTING.md)
 
 </div>
 
@@ -53,14 +57,43 @@ session.
 Lynx gives them one persistent, deterministic layer instead:
 
 - **Index once, query cheaply.** `lx index` writes a persistent `.lynx` index;
-  search/resolve/relations/context *hydrate* it and never re-index. Queries are
-  `O(query)`, not `O(repository)`.
+  retrieval commands *hydrate* it and never re-index. Structural lookups bypass
+  ranking, lexical queries hit the inverted index, and semantic retrieval
+  streams stored vectors under a bounded candidate budget.
 - **Coordinates, not text spans.** Results are symbols with stable identities, so
   they survive across runs and processes.
 - **Deterministic.** Bare symbol lookups bypass ranking entirely.
 - **Bounded.** Every query has a candidate cap, a deadline, and a cancellation
   token. Memory does not scale with repository size.
 - **Consumer-agnostic.** A small CLI and a standard stdio MCP server. No SDK.
+
+---
+
+## Documentation
+
+| Start here | For |
+|---|---|
+| [Documentation hub](docs/README.md) | The full map, by audience and task. |
+| [Getting started](docs/getting-started.md) | Install, index, query, connect an agent, upgrade, uninstall. |
+| [Concepts](docs/concepts.md) | Symbols, evidence, retrieval modes, ranking, bounds, and deliberate limits. |
+| [CLI reference](docs/cli.md) | Every command, flag, environment variable, and exit code. |
+| [MCP reference](docs/mcp.md) | The eight tools and per-client configuration. |
+| [Troubleshooting](docs/troubleshooting.md) | Install, index, model, query, and MCP failures. |
+| [FAQ](docs/faq.md) | Short answers to common questions. |
+| [Architecture](docs/architecture/README.md) | Contracts, design, audits, and measured reports. |
+
+## Project status
+
+Lynx is **pre-1.0** (`0.2.x`) and under active development.
+
+- The supported product surface is the `lx` binary and the `lx mcp` server.
+- The serialized wire form in `pizen-lynx-protocol` is the stability boundary.
+  Renaming or removing a serialized field is a breaking change.
+- The internal `pizen-lynx-*` crates are implementation details, **not** a
+  public API, and may change in any release.
+- A minor release may contain breaking changes while the project is pre-1.0.
+- Index formats may change; `lx status` reports `incompatible` rather than
+  misreading an old index, and `lx index --force` rebuilds it.
 
 ---
 
@@ -99,12 +132,17 @@ The installer detects your OS and architecture, downloads the matching prebuilt
 archive, **verifies its SHA-256 checksum**, installs the `lx` binary atomically
 into `$HOME/.local/bin`, and prints PATH guidance if needed. It needs no `sudo`.
 
+> **Channel versions can differ.** The installer resolves the newest stable
+> **GitHub Release**; `cargo install` resolves the newest version on
+> **crates.io**. If the installer's release is older than the crate you need,
+> use `cargo install pizen-lynx` or pin a release explicitly.
+
 Inspect or control it without executing:
 
 ```bash
 sh install.sh --help                 # usage
 sh install.sh --download-only=/tmp   # download + verify only, install nothing
-LYNX_VERSION=v0.2.0 sh install.sh    # pin a release
+LYNX_VERSION=v0.2.1 sh install.sh    # pin a release
 sh install.sh --dir "$HOME/bin"      # choose the install directory
 sh install.sh --system               # explicit /usr/local/bin install (may need sudo)
 ```
@@ -222,7 +260,9 @@ Prebuilt binaries are built natively per target and published with a
 "CI-native" means the target is built and validated on a native runner by the
 release workflow. macOS Intel (x86_64) is unsupported because the embedding
 engine is backed by ONNX Runtime, which no longer publishes an x86_64 macOS
-build; use an Apple Silicon Mac or build from source. See
+build; use an Apple Silicon Mac or a supported Linux target. A source build does
+not work on that target either, because the ONNX Runtime dependency itself
+cannot be built. See
 [`docs/architecture/release-readiness.md`](docs/architecture/release-readiness.md)
 for the exact status of each target.
 
@@ -273,8 +313,10 @@ bounded file/module documents.
 - **Very large repositories** are supported up to the measured envelope;
   semantic retrieval is an exact `O(symbols)` scan (no approximate index).
 - **Resource requirements** are dominated by the embedding model (~250 MB
-  resident). Structural commands (`resolve`, `relations`, lexical-only search,
-  `status`, `doctor`, `--version`) load no model at all.
+  resident). The structural commands (`resolve`, `relations`, `status`,
+  `doctor`, `--version`) never initialize it. `search` and `context` do, even
+  with `--mode lexical`; lexical mode skips the query embedding and vector scan,
+  but the provider is still constructed.
 
 Honest, measured numbers are in
 [`docs/architecture/final-product-report.md`](docs/architecture/final-product-report.md)
@@ -299,9 +341,11 @@ crates/
 ```
 
 `lynx-core` owns the product logic; `lynx-storage` owns persistence; the
-transports contain none. Nothing repository-proportional is retained in memory:
-queries stream from storage under a bounded candidate budget. See
-[`docs/architecture/final-product-audit.md`](docs/architecture/final-product-audit.md).
+transports contain none. During queries, nothing repository-proportional is
+retained in memory: results stream from storage under a bounded candidate
+budget. See
+[`docs/architecture/final-product-audit.md`](docs/architecture/final-product-audit.md)
+and the [architecture record index](docs/architecture/README.md).
 
 **Workspace boundaries are implementation boundaries, not public APIs.** Only
 `pizen-lynx` (the product) is a supported, versioned package. The other crates
@@ -330,6 +374,7 @@ cargo fmt --all -- --check
 cargo check --workspace
 cargo test --workspace
 cargo clippy --workspace --all-targets --all-features -- -D warnings
+python3 scripts/docs/check_links.py     # docs: relative links and anchors
 ```
 
 Distribution tests (installer + clean-machine install → index → query → MCP):
@@ -359,6 +404,21 @@ Build a release binary directly:
 cargo build --release -p pizen-lynx     # target/release/lx
 ```
 
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the full workflow: setup, quality
+gates, adding a language, changing a wire contract, and release rules.
+
+## Contributing
+
+Contributions are welcome. Start with [CONTRIBUTING.md](CONTRIBUTING.md), follow
+the [Code of Conduct](CODE_OF_CONDUCT.md), and check the
+[documentation hub](docs/README.md) before opening an issue. For questions, see
+[SUPPORT.md](SUPPORT.md).
+
+## Security
+
+Report vulnerabilities privately through GitHub Security Advisories. Do not open
+a public issue. See [SECURITY.md](SECURITY.md) for scope and disclosure policy.
+
 ## License
 
-MIT
+MIT — see [LICENSE](LICENSE).

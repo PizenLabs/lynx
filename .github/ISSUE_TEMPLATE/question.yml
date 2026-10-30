@@ -1,0 +1,48 @@
+name: Question
+description: Ask a usage or integration question about Lynx.
+title: "question: "
+labels: ["question"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Check the [documentation](https://github.com/PizenLabs/lynx/blob/main/docs/README.md)
+        and [troubleshooting guide](https://github.com/PizenLabs/lynx/blob/main/docs/troubleshooting.md)
+        first. Questions that reveal a defect will be moved to a bug report.
+
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Preflight
+      options:
+        - label: I read the getting-started guide and troubleshooting page.
+          required: true
+        - label: This is not a security vulnerability.
+          required: true
+
+  - type: textarea
+    id: question
+    attributes:
+      label: Question
+      description: What are you trying to do, and where are you stuck?
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Lynx version and platform
+      placeholder: "lx 0.2.1, macOS 15 arm64"
+    validations:
+      required: false
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: >-
+        The command or MCP client involved, plus relevant output. Redact
+        secrets and private paths.
+      render: shell
+    validations:
+      required: false
