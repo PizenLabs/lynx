@@ -1,0 +1,23 @@
+cff-version: 1.2.0
+message: "If you use Lynx in research or a product, please cite it as below."
+title: "Lynx: deterministic repository intelligence for AI-native tooling"
+abstract: >-
+  Lynx is a local-first repository intelligence engine. It indexes a source
+  tree into stable symbols, coordinates, structural relations, and embeddings,
+  then exposes retrieval through a CLI and a stdio Model Context Protocol
+  server. Lynx discovers evidence; consumers decide.
+type: software
+authors:
+  - name: "PizenLabs"
+    website: "https://github.com/PizenLabs"
+repository-code: "https://github.com/PizenLabs/lynx"
+url: "https://github.com/PizenLabs/lynx"
+license: MIT
+version: "0.2.1"
+date-released: "2026-10-17"
+keywords:
+  - repository intelligence
+  - code search
+  - model context protocol
+  - developer tooling
+  - rust

@@ -1,0 +1,109 @@
+name: Bug report
+description: Report a reproducible defect in Lynx, the CLI, or the MCP server.
+title: "bug: "
+labels: ["bug", "needs triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping improve Lynx. Please search existing issues first and
+        remove secrets, private paths, and proprietary source before submitting.
+
+        For security vulnerabilities, **stop** and use the private process in
+        [SECURITY.md](https://github.com/PizenLabs/lynx/blob/main/SECURITY.md).
+
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Preflight
+      options:
+        - label: I searched existing and closed issues for this problem.
+          required: true
+        - label: I am running the latest release, or I explain why not below.
+          required: true
+        - label: This is not a security vulnerability.
+          required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Lynx version
+      description: Output of `lx --version`.
+      placeholder: "lx 0.2.1"
+    validations:
+      required: true
+
+  - type: input
+    id: platform
+    attributes:
+      label: Platform
+      description: OS and architecture, for example `macOS 15 arm64` or `Ubuntu 24.04 x86_64`.
+      placeholder: "macOS 15 arm64"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: install
+    attributes:
+      label: Install channel
+      options:
+        - Installer (`curl ... | sh`)
+        - cargo install pizen-lynx
+        - Source build (`cargo build --release -p pizen-lynx`)
+        - Other / not sure
+    validations:
+      required: true
+
+  - type: textarea
+    id: command
+    attributes:
+      label: Command or MCP call
+      description: The exact command, or the MCP tool name and arguments.
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behaviour
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behaviour
+      description: Include the full error output. Redact secrets and private paths.
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: doctor
+    attributes:
+      label: Diagnostics
+      description: Paste the output of `lx doctor`.
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal reproduction
+      description: >-
+        A small repository, file, query, or MCP frame that reproduces the
+        problem. A link to a minimal public repository is ideal.
+    validations:
+      required: false
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: >-
+        Anything else that helps: index state (`lx status`), MCP client and
+        version, whether the index is fresh, and what you already tried.
+    validations:
+      required: false

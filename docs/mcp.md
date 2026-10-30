@@ -1,5 +1,8 @@
 # Lynx MCP server
 
+> Part of the [Lynx documentation](README.md). For a full walkthrough, see
+> [Getting started](getting-started.md).
+
 Lynx ships **one** canonical Model Context Protocol server. Any MCP client can
 use it; there is no Lynx-specific SDK and no per-consumer code path.
 
@@ -16,8 +19,11 @@ lx mcp --check         # fast protocol smoke test, no indexing, then exit
 - **Transport.** Newline-delimited JSON-RPC 2.0 over stdio. Diagnostics go to
   stderr; stdout carries protocol frames only.
 - **Protocol version.** `2024-11-05`.
+- **Capabilities.** Tools only; the server does not advertise resources,
+  prompts, or sampling.
 - **Lifecycle.** Hydrates `<workspace>/.lynx` at startup; builds it once if
-  absent. Queries never re-index.
+  absent. Queries never re-index. Startup initializes the embedding provider, so
+  the first launch may download or load the model.
 - **Workspace.** The enclosing git toplevel of the launch directory, else the
   launch directory. Pass `PATH` explicitly if your consumer launches from an
   ambiguous directory.
