@@ -246,25 +246,24 @@ Full reference: [`docs/cli.md`](docs/cli.md).
 
 ## Supported platforms
 
-Prebuilt binaries are built natively per target and published with a
+Prebuilt binaries are cross-compiled on `ubuntu-latest` and published with a
 `SHA256SUMS` manifest:
 
 | Platform | Architecture | Artifact | Status |
 |---|---|---|---|
-| macOS | arm64 (Apple Silicon) | `lynx-vX.Y.Z-darwin-arm64.tar.gz` | Validated |
-| Linux | x86_64 | `lynx-vX.Y.Z-linux-x86_64.tar.gz` | CI-native |
-| Linux | arm64 | `lynx-vX.Y.Z-linux-arm64.tar.gz` | CI-native |
+| macOS | arm64 (Apple Silicon) | `lynx-vX.Y.Z-darwin-arm64.tar.gz` | Cross-compiled (osxcross) |
+| Linux | x86_64 | `lynx-vX.Y.Z-linux-x86_64.tar.gz` | Native |
+| Linux | arm64 | `lynx-vX.Y.Z-linux-arm64.tar.gz` | Cross-compiled (GNU toolchain) |
 | macOS | x86_64 (Intel) | — | **Unsupported** |
 | Windows | — | — | **Unsupported** |
 
-"CI-native" means the target is built and validated on a native runner by the
-release workflow. macOS Intel (x86_64) is unsupported because the embedding
-engine is backed by ONNX Runtime, which no longer publishes an x86_64 macOS
-build; use an Apple Silicon Mac or a supported Linux target. A source build does
-not work on that target either, because the ONNX Runtime dependency itself
-cannot be built. See
+Every release job runs on `ubuntu-latest`; no macOS or Windows runner is
+scheduled. Non-Linux binaries are cross-compiled on Linux. macOS Intel (x86_64)
+is unsupported because the embedding engine is backed by ONNX Runtime, which no
+longer publishes an x86_64 macOS build; use an Apple Silicon Mac or a supported
+Linux target. See
 [`docs/architecture/release-readiness.md`](docs/architecture/release-readiness.md)
-for the exact status of each target.
+for the exact status and validation limits of each target.
 
 ---
 

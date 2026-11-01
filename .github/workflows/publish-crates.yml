@@ -32,7 +32,8 @@ permissions:
 jobs:
   guard:
     name: confirms version and intent
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
       - name: Check version and confirmation
@@ -52,7 +53,8 @@ jobs:
   publish:
     name: publish in dependency order
     needs: [guard]
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
     environment: crates-io
     steps:
       - uses: actions/checkout@v7

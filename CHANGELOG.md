@@ -9,6 +9,14 @@ serialized wire form is versioned by `pizen-lynx-protocol`.
 
 ## [Unreleased]
 
+### Changed
+
+- CI and release workflows now run exclusively on `ubuntu-latest`. Routine
+  push/PR checks run format, check, clippy, and tests only; release binaries are
+  cross-compiled on Linux for Linux x86_64/arm64 and macOS arm64, so no macOS or
+  Windows runner is scheduled. See
+  [the release contract](docs/architecture/release-contract.md#3-release-targets).
+
 ## [0.2.2] - 2026-10-30
 
 ### Added
