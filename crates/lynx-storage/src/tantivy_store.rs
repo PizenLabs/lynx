@@ -13,6 +13,14 @@ use tantivy::{doc, Index, IndexReader, IndexWriter, ReloadPolicy, Term};
 
 use crate::error::StorageError;
 
+/// Version of the lexical document layout (fields + identifier expansion).
+///
+/// The lexical store is derived data, so a layout change discards it and lets
+/// the caller re-index rather than misreading documents written by an older
+/// schema. The graph schema is bumped in lockstep so freshness reports
+/// `incompatible` instead of `fresh` over an empty lexical index.
+const LEXICAL_SCHEMA_VERSION: &str = "2";
+
 /// Heap budget for the single shared indexing writer. One writer is reused for
 /// an entire indexing pass; a fresh writer (with its own 15 MB arena and merge
 /// threads) is *not* created per batch.
@@ -60,18 +68,31 @@ pub struct TantivyStore {
     writer: Mutex<Option<IndexWriter>>,
     symbol_hash: Field,
     code_snippet: Field,
+    code_tokens: Field,
     language: Field,
     file_path: Field,
 }
 
 impl TantivyStore {
     /// Opens or creates the index under `dir` (created when absent).
+    ///
+    /// A directory written by an older lexical schema is discarded: the
+    /// lexical index is derived from source, so re-indexing is the correct
+    /// recovery and there is no user data to preserve.
     pub fn open(dir: &Path) -> Result<Self, StorageError> {
+        let marker = dir.join("schema_version");
+        let current = std::fs::read_to_string(&marker)
+            .map(|value| value.trim() == LEXICAL_SCHEMA_VERSION)
+            .unwrap_or(false);
+        if dir.exists() && !current {
+            std::fs::remove_dir_all(dir)?;
+        }
         std::fs::create_dir_all(dir)?;
 
         let mut builder = Schema::builder();
         let symbol_hash = builder.add_text_field("symbol_hash", STRING | STORED);
         let code_snippet = builder.add_text_field("code_snippet", TEXT | STORED);
+        let code_tokens = builder.add_text_field("code_tokens", TEXT);
         let language = builder.add_text_field("language", STRING);
         let file_path = builder.add_text_field("file_path", STRING | STORED);
         let schema = builder.build();
@@ -86,6 +107,7 @@ impl TantivyStore {
             .reader_builder()
             .reload_policy(ReloadPolicy::Manual)
             .try_into()?;
+        std::fs::write(&marker, LEXICAL_SCHEMA_VERSION)?;
 
         Ok(Self {
             dir: dir.to_path_buf(),
@@ -94,6 +116,7 @@ impl TantivyStore {
             writer: Mutex::new(None),
             symbol_hash,
             code_snippet,
+            code_tokens,
             language,
             file_path,
         })
@@ -112,9 +135,11 @@ impl TantivyStore {
             None => guard.insert(self.index.writer(WRITER_HEAP_BYTES)?),
         };
         for doc in docs {
+            let tokens = expand_identifiers(&doc.code_snippet);
             writer.add_document(doc!(
                 self.symbol_hash => doc.symbol_hash.as_str(),
                 self.code_snippet => doc.code_snippet.as_str(),
+                self.code_tokens => tokens.as_str(),
                 self.language => doc.language.as_str(),
                 self.file_path => doc.file_path.as_str(),
             ))?;
@@ -202,7 +227,12 @@ impl TantivyStore {
         }
         let parser = QueryParser::for_index(
             &self.index,
-            vec![self.code_snippet, self.language, self.file_path],
+            vec![
+                self.code_snippet,
+                self.code_tokens,
+                self.language,
+                self.file_path,
+            ],
         );
         let query = match parser.parse_query(query) {
             Ok(query) => query,
@@ -282,6 +312,69 @@ impl TantivyStore {
     }
 }
 
+/// Expands identifier-like runs in source text into their constituent words.
+///
+/// Tantivy's default tokenizer splits on punctuation and case-folds, so
+/// `verify_password` is searchable as two terms but `verifyPassword` is one
+/// opaque term. Natural-language queries ("password check") then miss the
+/// symbol that actually implements them. Indexing `verify password` alongside
+/// the original text restores that recall without changing exact-identifier
+/// matching (the original token is still indexed).
+fn expand_identifiers(text: &str) -> String {
+    let mut out = String::new();
+    let mut word = String::new();
+    for ch in text.chars().chain(std::iter::once(' ')) {
+        if ch.is_alphanumeric() || ch == '_' {
+            word.push(ch);
+        } else {
+            push_identifier_words(&word, &mut out);
+            word.clear();
+        }
+    }
+    out
+}
+
+/// Appends the lowercased word-boundary split of one identifier run.
+fn push_identifier_words(word: &str, out: &mut String) {
+    let chars: Vec<char> = word.chars().collect();
+    if chars.len() < 3 {
+        return;
+    }
+    let mut parts: Vec<String> = Vec::new();
+    let mut current = String::new();
+    for (index, ch) in chars.iter().copied().enumerate() {
+        if ch == '_' {
+            if !current.is_empty() {
+                parts.push(std::mem::take(&mut current));
+            }
+            continue;
+        }
+        let previous = index.checked_sub(1).and_then(|i| chars.get(i)).copied();
+        let next = chars.get(index + 1).copied();
+        let boundary = ch.is_uppercase()
+            && previous.is_some_and(|p| p.is_lowercase() || p.is_ascii_digit())
+            || ch.is_uppercase()
+                && previous.is_some_and(|p| p.is_uppercase())
+                && next.is_some_and(|n| n.is_lowercase());
+        if boundary && !current.is_empty() {
+            parts.push(std::mem::take(&mut current));
+        }
+        current.push(ch);
+    }
+    if !current.is_empty() {
+        parts.push(current);
+    }
+    if parts.len() > 1 {
+        for (index, part) in parts.iter().enumerate() {
+            if index > 0 {
+                out.push(' ');
+            }
+            out.extend(part.chars().flat_map(char::to_lowercase));
+        }
+        out.push(' ');
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -293,6 +386,48 @@ mod tests {
             language: "Rust".to_string(),
             file_path: "src/lib.rs".to_string(),
         }
+    }
+
+    #[test]
+    fn camel_case_identifiers_are_searchable_by_their_words() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = TantivyStore::open(dir.path()).unwrap();
+        store
+            .add_documents(&[doc(
+                "h1",
+                "func (s *Service) verifyPassword(p string) bool {}",
+            )])
+            .unwrap();
+        let hits = store.search_snippets("password check", 10).unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].symbol_hash, "h1");
+        // Exact identifier matching still works.
+        let exact = store.search_snippets("verifyPassword", 10).unwrap();
+        assert_eq!(exact.len(), 1);
+    }
+
+    #[test]
+    fn identifier_expansion_splits_camel_and_snake_case() {
+        assert_eq!(expand_identifiers("verifyPassword"), "verify password ");
+        assert_eq!(expand_identifiers("refresh_token"), "refresh token ");
+        assert_eq!(expand_identifiers("HTTPServer"), "http server ");
+        // A single lowercase word needs no expansion.
+        assert_eq!(expand_identifiers("validate"), "");
+        assert_eq!(expand_identifiers("JWT"), "");
+    }
+
+    #[test]
+    fn incompatible_lexical_schema_is_discarded() {
+        let dir = tempfile::tempdir().unwrap();
+        {
+            let store = TantivyStore::open(dir.path()).unwrap();
+            store.add_documents(&[doc("h1", "fn alpha() {}")]).unwrap();
+            store.commit().unwrap();
+            assert_eq!(store.search_snippets("alpha", 5).unwrap().len(), 1);
+        }
+        std::fs::write(dir.path().join("schema_version"), "1").unwrap();
+        let store = TantivyStore::open(dir.path()).unwrap();
+        assert!(store.search_snippets("alpha", 5).unwrap().is_empty());
     }
 
     #[test]

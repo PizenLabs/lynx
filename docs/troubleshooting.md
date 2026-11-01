@@ -46,7 +46,7 @@ The installer refuses prereleases by default. If you are intentionally testing
 one, set `LYNX_ALLOW_PRERELEASE=1`. For a specific stable release:
 
 ```bash
-LYNX_VERSION=v0.2.1 sh install.sh
+LYNX_VERSION=v0.2.2 sh install.sh
 ```
 
 If the download fails behind a proxy or a GitHub rate limit, retry later, use
@@ -126,7 +126,8 @@ lx index --force
 ### Indexing is slow or uses a lot of memory
 
 The first index parses every eligible file and embeds every symbol. The
-embedding model itself is roughly 250 MB resident. Subsequent runs are
+embedding model uses hundreds of MB of resident memory when loaded (≈600 MB
+peak measured on the macOS arm64 reference environment). Subsequent runs are
 incremental and much cheaper.
 
 If the first pass is too heavy:
@@ -195,10 +196,11 @@ If the download fails:
 ### Structural commands are fast but search is slow
 
 `resolve`, `relations`, `status`, `doctor`, and `--version` load no embedding
-model. `search` and `context` initialize it, even with `--mode lexical`:
-lexical mode skips the query embedding and the vector scan, but the session
-still constructs the provider. For exact identifiers, prefer `lx resolve` or
-`lx search "ExactName" --mode lexical` and see the [bounds](concepts.md#bounds).
+model. Lexical search does not either: the provider is constructed lazily, so
+`lx search "ExactName" --mode lexical` stays model-free and is the fastest
+ranked path. Semantic and hybrid search and `context` load the model on first
+use. For an exact identifier, prefer `lx resolve`; for a short ranked list, use
+lexical mode and see the [bounds](concepts.md#bounds).
 
 ## Query quality
 

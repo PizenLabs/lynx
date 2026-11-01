@@ -118,6 +118,11 @@ open the exact span rather than re-searching the file.
 | `structural` | Exact symbol lookup only; bypasses ranking. For natural-language input it returns no candidates. Use `resolve` and `relations` for the full structural surface. | Known names (`Login`). |
 | `hybrid` | Fuses lexical and semantic channels, then applies deterministic adjustments. Default for `lx search`. | General "where is X" questions. |
 
+The embedding model is loaded lazily, only when a channel actually needs a
+vector. Structural commands and lexical search never load it; semantic and
+hybrid search load it once per process. A no-change `lx index` pass performs no
+embeddings and therefore does not load it either.
+
 Bare and qualified symbol queries take the deterministic route first: `Login`,
 `auth.Login`, and `ValidateToken` are not turned into embedding searches.
 

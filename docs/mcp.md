@@ -22,8 +22,12 @@ lx mcp --check         # fast protocol smoke test, no indexing, then exit
 - **Capabilities.** Tools only; the server does not advertise resources,
   prompts, or sampling.
 - **Lifecycle.** Hydrates `<workspace>/.lynx` at startup; builds it once if
-  absent. Queries never re-index. Startup initializes the embedding provider, so
-  the first launch may download or load the model.
+  absent. Queries never re-index. For an existing index, startup is model-free:
+  the embedding provider is constructed lazily on the first semantic request,
+  so `resolve`, `relations`, `index_status`, and lexical search never load the
+  model. The first semantic request in a fresh process pays the model-load cost
+  once; the rest reuse it. If the index is absent, the one-time build embeds
+  symbols and therefore loads the model.
 - **Workspace.** The enclosing git toplevel of the launch directory, else the
   launch directory. Pass `PATH` explicitly if your consumer launches from an
   ambiguous directory.

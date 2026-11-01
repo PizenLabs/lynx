@@ -44,7 +44,7 @@ contract. It never indexes and never loads the model (≈37 ms).
 Lynx Doctor
 
 Binary       OK
-Version      0.2.1
+Version      0.2.2
 Platform     macOS arm64
 Install      /Users/you/.local/bin/lx
 Workspace    /Users/you/project
@@ -81,6 +81,9 @@ re-scan and prints counts only.
 
 Hybrid (default) BM25 + embedding search fused by reciprocal rank fusion.
 `--explain` prints the query report and per-result ranking contributions.
+`--mode lexical` is model-free: it never constructs the embedding provider.
+`--mode semantic` and `--mode hybrid` load the model once on first use; in a
+one-shot `lx` process that cost is paid on the first semantic query.
 `--mode structural` only resolves a bare/qualified symbol name and returns no
 candidates for natural-language input; use `lx resolve` and `lx relations` for
 deterministic structural access.

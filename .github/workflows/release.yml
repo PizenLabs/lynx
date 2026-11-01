@@ -12,7 +12,7 @@ name: Release
 #    |-- prerelease -> `prerelease-validate` builds + smoke-tests, then STOP
 #    |                 (no artifacts uploaded, no GitHub Release, no update of
 #    |                  the stable installer surface)
-#    '-- stable     -> `build` (native, per target) -> `release`
+#    '-- stable     -> `build` (cross-compiled on ubuntu-latest) -> `release`
 #                       -> archives + SHA256SUMS -> GitHub Release
 #
 # Concretely:
@@ -20,6 +20,17 @@ name: Release
 #   v1.0.1-rc.1     prerelease  -> validation only; NEVER a production release
 #   v1.0.1-alpha.1  prerelease  -> validation only; NEVER a production release
 #   v1.0.1-beta.1   prerelease  -> validation only; NEVER a production release
+#
+# A manual `workflow_dispatch` runs the same pipeline. Dispatching against a
+# stable tag (choose the tag in the "Use workflow from" selector) produces a
+# normal stable release; dispatching against a branch takes the validation-only
+# path. No tag is ever created by this workflow.
+#
+# Cost policy: every job runs on `ubuntu-latest`. No macOS or Windows runner is
+# scheduled. Non-Linux binaries are cross-compiled on Linux:
+#   * linux-x86_64  -> native x86_64 Linux target
+#   * linux-arm64   -> taiki-e/setup-cross-toolchain-action (GNU cross toolchain)
+#   * darwin-arm64  -> osxcross (LLVM/Apple SDK cross toolchain)
 #
 # `install.sh` consumes only stable releases: it resolves `latest` through
 # GitHub's `/releases/latest` (which excludes prereleases) and rejects an
@@ -31,13 +42,22 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
 
 jobs:
   # Classify the tag. On an invalid tag this job fails, closing the pipeline.
   classify:
     name: classify tag (stable / prerelease / invalid)
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
     outputs:
       kind: ${{ steps.classify.outputs.kind }}
       version: ${{ steps.classify.outputs.version }}
@@ -66,13 +86,16 @@ jobs:
 
   verify:
     name: fmt / check / clippy / test
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: release-verify
       - run: cargo fmt --all -- --check
       - run: cargo check --workspace
       - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
@@ -84,63 +107,195 @@ jobs:
     name: tag == package version
     needs: [classify]
     if: needs.classify.outputs.is_tag == 'true'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - run: scripts/release/check_versions.sh "${GITHUB_REF_NAME}"
 
   # The ONLY producer of production artifacts. Gated on a stable tag.
+  #
+  # Every entry is cross-compiled on ubuntu-latest. There is no `runner:` field:
+  # `runs-on` is intentionally fixed to the Linux standard runner for the whole
+  # matrix.
+  #
+  # Supported targets are limited by the ONNX Runtime prebuilt binaries shipped
+  # by `ort-sys` (the backend behind `fastembed`):
+  #   aarch64-apple-darwin, aarch64-unknown-linux-gnu, x86_64-unknown-linux-gnu.
+  # No upstream ONNX Runtime exists for x86_64-apple-darwin, x86_64-pc-windows-gnu,
+  # or *-unknown-linux-musl, so those targets are not declared. See
+  # docs/architecture/release-contract.md for the fail-closed policy.
   build:
     name: build ${{ matrix.platform }}
     needs: [classify, verify, version-guard]
     if: needs.classify.outputs.kind == 'stable'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
     strategy:
       fail-fast: false
       matrix:
         include:
-          # REQUIRED targets — a failure here fails the release (fail closed).
-          - runner: macos-14          # Apple Silicon (arm64)
-            target: aarch64-apple-darwin
-            platform: darwin-arm64
-          - runner: ubuntu-24.04      # x86_64
+          # REQUIRED target: built natively by the Linux x86_64 runner.
+          - platform: linux-x86_64
             target: x86_64-unknown-linux-gnu
-            platform: linux-x86_64
-          # CONDITIONAL target: `ubuntu-24.04-arm` requires an arm64 runner to be
-          # available on the repository plan. It is required (not optional): if
-          # the runner is unavailable the job fails and NO release is published.
-          # See docs/architecture/release-readiness.md for the target policy.
-          - runner: ubuntu-24.04-arm  # arm64
+            cross: none
+            runnable: true
+            clean_machine: true
+          # REQUIRED target: cross-compiled with the GNU aarch64 toolchain.
+          # `runnable: true` because the setup action installs binfmt/QEMU, so
+          # `lx --version` and `lx mcp --check` execute on the Linux runner.
+          - platform: linux-arm64
             target: aarch64-unknown-linux-gnu
-            platform: linux-arm64
-          # UNSUPPORTED: macOS Intel (x86_64). The embedding engine is backed by
-          # ONNX Runtime (via fastembed/ort), and upstream ONNX Runtime publishes
-          # no prebuilt x86_64 macOS binary, so the target cannot be built. No
-          # macOS Intel target is declared and no artifact is claimed.
-          # UNSUPPORTED: Windows. No target is built and none is claimed.
-    runs-on: ${{ matrix.runner }}
+            cross: linux
+            runnable: true
+            clean_machine: false
+          # REQUIRED target: cross-compiled with osxcross on Linux. A macOS
+          # binary cannot be executed on Linux, so runtime smoke tests are
+          # replaced by format/architecture and version-string checks.
+          - platform: darwin-arm64
+            target: aarch64-apple-darwin
+            cross: darwin
+            runnable: false
+            clean_machine: false
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
       - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: release-${{ matrix.target }}
+
+      - name: Install Linux cross toolchain
+        if: matrix.cross == 'linux'
+        uses: taiki-e/setup-cross-toolchain-action@12b7ad4acfa95a1476779d6c06699b96ec1691f8
+        with:
+          target: ${{ matrix.target }}
+
+      - name: Install macOS cross toolchain (osxcross)
+        if: matrix.cross == 'darwin'
+        uses: mbround18/setup-osxcross@8d91ad5a7ea8d0a4e47e1ff06f60f6889a9d2a1c
+        with:
+          osx-version: "14.0"
+
+      - name: Cache Darwin compiler-rt
+        if: matrix.cross == 'darwin'
+        uses: actions/cache@v6
+        with:
+          path: ${{ env.OSXCROSS_TARGET }}/lib/clang-rt
+          key: ${{ runner.os }}-osxcross-compiler-rt-18-v1
+
+      - name: Build Darwin compiler-rt (osxcross)
+        if: matrix.cross == 'darwin'
+        timeout-minutes: 45
+        shell: bash
+        run: |
+          set -euo pipefail
+          rt_dir="${OSXCROSS_TARGET}/lib/clang-rt"
+          mkdir -p "$rt_dir"
+          rt="${rt_dir}/libclang_rt.osx.a"
+          if [ -f "$rt" ]; then
+            echo "compiler-rt already cached: ${rt}"
+            exit 0
+          fi
+          osxcross_dir="$(dirname "$OSXCROSS_TARGET")"
+          # ONNX Runtime's CoreML objects reference ___isPlatformVersionAtLeast,
+          # which lives in the Clang compiler runtime. osxcross does not ship it
+          # by default, so build it with osxcross's own script.
+          ( cd "$osxcross_dir" && UNATTENDED=1 ./build_compiler_rt.sh )
+          built="$(find "$osxcross_dir" -path '*/lib/darwin/libclang_rt.osx.a' -type f | head -n1)"
+          if [ -z "$built" ]; then
+            built="$(find "$osxcross_dir" -name 'libcompiler_rt.a' -type f | head -n1)"
+          fi
+          if [ -z "$built" ]; then
+            echo "::error::compiler-rt build produced no Darwin archive"
+            exit 1
+          fi
+          cp "$built" "$rt"
+          file "$rt"
+
+      - name: Configure macOS cross compiler
+        if: matrix.cross == 'darwin'
+        shell: bash
+        run: |
+          set -euo pipefail
+          bin_dir="${OSXCROSS_TARGET}/bin"
+          cc="$(find "$bin_dir" -name 'aarch64-apple-darwin*-clang' | head -n1)"
+          cxx="$(find "$bin_dir" -name 'aarch64-apple-darwin*-clang++' | head -n1)"
+          ar="$(find "$bin_dir" -name 'aarch64-apple-darwin*-ar' | head -n1)"
+          if [ -z "$cc" ] || [ -z "$cxx" ] || [ -z "$ar" ]; then
+            echo "::error::osxcross did not produce a complete aarch64-apple-darwin toolchain"
+            find "$bin_dir" -maxdepth 1 -type f | sort || true
+            exit 1
+          fi
+          compiler_rt="${OSXCROSS_TARGET}/lib/clang-rt/libclang_rt.osx.a"
+          if [ ! -f "$compiler_rt" ]; then
+            compiler_rt="$("$cc" -print-resource-dir)/lib/darwin/libclang_rt.osx.a"
+          fi
+          if [ ! -f "$compiler_rt" ]; then
+            echo "::error::Darwin compiler runtime not found"
+            exit 1
+          fi
+          {
+            echo "CC_aarch64_apple_darwin=${cc}"
+            echo "CXX_aarch64_apple_darwin=${cxx}"
+            echo "AR_aarch64_apple_darwin=${ar}"
+            echo "CARGO_TARGET_AARCH64_APPLE_DARWIN_LINKER=${cc}"
+            echo "CARGO_TARGET_AARCH64_APPLE_DARWIN_RUSTFLAGS=-C link-arg=${compiler_rt}"
+            # Match the deployment target used by the upstream ONNX Runtime
+            # prebuilt for aarch64-apple-darwin.
+            echo "MACOSX_DEPLOYMENT_TARGET=13.4"
+          } >> "$GITHUB_ENV"
+
       - name: Build release binary
-        run: cargo build --release --locked -p pizen-lynx --target ${{ matrix.target }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo build --release --locked -p pizen-lynx --target "${{ matrix.target }}"
+
       - name: Verify binary version == tag version
         shell: bash
         run: |
           set -euo pipefail
-          scripts/release/check_versions.sh "${GITHUB_REF_NAME}" \
-            --binary "target/${{ matrix.target }}/release/lx"
+          bin="target/${{ matrix.target }}/release/lx"
+          if [ "${{ matrix.runnable }}" = "true" ]; then
+            # Executes the binary (natively on x86_64, through QEMU/binfmt for
+            # linux-arm64) and asserts `lx --version`.
+            scripts/release/check_versions.sh "${GITHUB_REF_NAME}" --binary "$bin"
+          else
+            # A macOS binary cannot be executed on Linux. The tag/package
+            # version is checked here, and the compiled-in version literal is
+            # asserted below.
+            scripts/release/check_versions.sh "${GITHUB_REF_NAME}"
+            version="${GITHUB_REF_NAME#v}"
+            if ! strings "$bin" | grep -Fq -- "$version"; then
+              echo "::error::compiled binary does not contain the release version ${version}"
+              exit 1
+            fi
+            echo "check_versions: cross-compiled binary contains version ${version}"
+          fi
+
+      - name: Verify cross-compiled binary architecture
+        if: matrix.cross == 'darwin'
+        shell: bash
+        run: |
+          set -euo pipefail
+          bin="target/${{ matrix.target }}/release/lx"
+          file "$bin"
+          file "$bin" | grep -Eq 'Mach-O 64-bit.*arm64' || {
+            echo "::error::${bin} is not a 64-bit arm64 Mach-O binary"
+            exit 1
+          }
+
       - name: Package archive
         shell: bash
         run: |
           set -euo pipefail
-          tag="${GITHUB_REF_NAME}"
-          asset="lynx-${tag}-${{ matrix.platform }}.tar.gz"
+          bin="target/${{ matrix.target }}/release/lx"
+          asset="lynx-${GITHUB_REF_NAME}-${{ matrix.platform }}.tar.gz"
           mkdir -p dist
-          cp "target/${{ matrix.target }}/release/lx" dist/lx
+          cp "$bin" dist/lx
           chmod 0755 dist/lx
           tar -czf "$asset" -C dist lx
           rm -f dist/lx
@@ -150,37 +305,47 @@ jobs:
             echo "::error::archive ${asset} contents unexpected: ${contents}"
             exit 1
           fi
-          echo "ASSET=$asset" >> "$GITHUB_ENV"
-      - name: Smoke-test the binary (native)
+          echo "ASSET=${asset}" >> "$GITHUB_ENV"
+          echo "BIN=${bin}" >> "$GITHUB_ENV"
+
+      - name: Smoke-test the binary
+        if: matrix.runnable
         shell: bash
         run: |
           set -euo pipefail
-          ./target/${{ matrix.target }}/release/lx --version
-          ./target/${{ matrix.target }}/release/lx mcp --check
+          "$BIN" --version
+          "$BIN" mcp --check
+
       - name: Clean-machine validation (native)
+        if: matrix.clean_machine
         shell: bash
         run: |
           set -euo pipefail
-          tests/distribution/clean_machine_test.sh "target/${{ matrix.target }}/release/lx"
+          tests/distribution/clean_machine_test.sh "$BIN"
+
       - uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.platform }}
           path: ${{ env.ASSET }}
           if-no-files-found: error
+          retention-days: 7
 
   # A prerelease tag takes this path and then stops. It builds and smoke-tests
   # the binary, but uploads no artifacts and creates no GitHub Release, so it
-  # cannot update the stable installer surface. `workflow_dispatch` (manual)
-  # takes the same validation-only path.
+  # cannot update the stable installer surface. A `workflow_dispatch` on a
+  # branch takes the same validation-only path.
   prerelease-validate:
     name: validation only (no production release)
     needs: [classify, verify]
     if: needs.classify.outputs.kind == 'prerelease' || needs.classify.outputs.kind == 'dispatch'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: release-verify
       - name: Build (validation only)
         run: cargo build --release --locked -p pizen-lynx
       - name: Smoke-test (validation only)
@@ -202,7 +367,10 @@ jobs:
     name: publish stable release
     needs: [classify, build]
     if: needs.classify.outputs.kind == 'stable'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
     steps:
       # Required: the gh release command shells out to git to resolve the
       # repository, and --verify-tag needs the tag to exist in a local clone.

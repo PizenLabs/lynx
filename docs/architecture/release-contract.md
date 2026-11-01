@@ -69,26 +69,38 @@ proves the built binary reports the same version.
 
 ## 3. Release targets
 
-Artifacts are built on **native runners per target**; there is no
-cross-compilation and no support claimed without a native build.
+Artifacts are **cross-compiled on `ubuntu-latest`**. Every job in every
+workflow runs on the standard Linux runner; macOS and Windows runners are
+prohibited because they consume metered capacity. There is no `runner:` matrix
+axis.
 
-| Target | Runner | Artifact | Policy |
+| Target | Build host / engine | Artifact | Policy |
 |---|---|---|---|
-| macOS arm64 | `macos-14` | `lynx-vX.Y.Z-darwin-arm64.tar.gz` | REQUIRED |
-| Linux x86_64 | `ubuntu-24.04` | `lynx-vX.Y.Z-linux-x86_64.tar.gz` | REQUIRED |
-| Linux arm64 | `ubuntu-24.04-arm` | `lynx-vX.Y.Z-linux-arm64.tar.gz` | REQUIRED (CONDITIONAL runner availability) |
+| macOS arm64 | `ubuntu-latest` + osxcross (`aarch64-apple-darwin`) | `lynx-vX.Y.Z-darwin-arm64.tar.gz` | REQUIRED |
+| Linux x86_64 | `ubuntu-latest` native (`x86_64-unknown-linux-gnu`) | `lynx-vX.Y.Z-linux-x86_64.tar.gz` | REQUIRED |
+| Linux arm64 | `ubuntu-latest` + GNU cross toolchain (`aarch64-unknown-linux-gnu`) | `lynx-vX.Y.Z-linux-arm64.tar.gz` | REQUIRED |
 | macOS x86_64 | — | — | **UNSUPPORTED** (no upstream ONNX Runtime build) |
-| Windows | — | — | **UNSUPPORTED** |
+| Windows | — | — | **UNSUPPORTED** (no upstream ONNX Runtime MinGW build) |
+| Linux musl | — | — | **UNSUPPORTED** (no upstream ONNX Runtime musl build) |
 
-A declared target that cannot be built **fails the release** (fail closed): if
-the `ubuntu-24.04-arm` runner is unavailable on the repository plan, the `build`
-job fails and no release is published. No incomplete artifact set is ever
+A declared target that cannot be built **fails the release** (fail closed): the
+`release` job needs all of `build`, and no incomplete artifact set is ever
 uploaded.
 
-macOS Intel (x86_64) is **not** a declared target: the embedding engine is
-backed by ONNX Runtime, and upstream ONNX Runtime publishes no x86_64 macOS
-build, so the binary cannot be compiled for it. `install.sh` rejects the
-platform explicitly rather than attempting a download that cannot exist.
+The unsupported targets are a dependency limit, not a policy preference:
+`fastembed` uses `ort-sys`, whose prebuilt ONNX Runtime distribution covers only
+`aarch64-apple-darwin`, `aarch64-unknown-linux-gnu`, `x86_64-unknown-linux-gnu`,
+and the Windows MSVC targets. No `x86_64-apple-darwin`,
+`x86_64-pc-windows-gnu`, or `*-unknown-linux-musl` runtime exists. `install.sh`
+rejects unsupported platforms explicitly. Enabling them requires changing the
+embedding backend or building ONNX Runtime from source; both are outside the
+distribution boundary.
+
+Runtime validation is bounded by what Linux can execute: `linux-x86_64` runs the
+full clean-machine suite; `linux-arm64` runs `lx --version` and `lx mcp --check`
+under QEMU; `darwin-arm64` is validated by tag/package version, the embedded
+version string, and Mach-O architecture. The archive and checksum contract is
+identical for all targets.
 
 Each archive contains exactly one file — `lx`, at the archive root, mode `0755`
 — and the workflow verifies this before publishing. The `SHA256SUMS` manifest is

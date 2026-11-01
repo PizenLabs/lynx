@@ -17,6 +17,7 @@ guaranteed, or **how** a claim was measured.
 | [production-readiness.md](production-readiness.md) | **Normative** | Capability matrix, status vocabulary, and the production gate. |
 | [final-product-report.md](final-product-report.md) | Measured report | Retrieval quality, scaling, lifecycle, and resource numbers with the run command. |
 | [mcp-compatibility.md](mcp-compatibility.md) | Validation matrix | Which MCP consumers were exercised and what each configuration needs. |
+| [Performance and productization audit](../audit/lynx-performance-and-productization-report.md) | Dated measured report | Baseline and final numbers for the 2026-10 retrieval, startup, memory, and indexing pass. |
 
 ## Distribution and release
 

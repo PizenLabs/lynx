@@ -142,7 +142,7 @@ Inspect or control it without executing:
 ```bash
 sh install.sh --help                 # usage
 sh install.sh --download-only=/tmp   # download + verify only, install nothing
-LYNX_VERSION=v0.2.1 sh install.sh    # pin a release
+LYNX_VERSION=v0.2.2 sh install.sh    # pin a release
 sh install.sh --dir "$HOME/bin"      # choose the install directory
 sh install.sh --system               # explicit /usr/local/bin install (may need sudo)
 ```
@@ -246,25 +246,24 @@ Full reference: [`docs/cli.md`](docs/cli.md).
 
 ## Supported platforms
 
-Prebuilt binaries are built natively per target and published with a
+Prebuilt binaries are cross-compiled on `ubuntu-latest` and published with a
 `SHA256SUMS` manifest:
 
 | Platform | Architecture | Artifact | Status |
 |---|---|---|---|
-| macOS | arm64 (Apple Silicon) | `lynx-vX.Y.Z-darwin-arm64.tar.gz` | Validated |
-| Linux | x86_64 | `lynx-vX.Y.Z-linux-x86_64.tar.gz` | CI-native |
-| Linux | arm64 | `lynx-vX.Y.Z-linux-arm64.tar.gz` | CI-native |
+| macOS | arm64 (Apple Silicon) | `lynx-vX.Y.Z-darwin-arm64.tar.gz` | Cross-compiled (osxcross) |
+| Linux | x86_64 | `lynx-vX.Y.Z-linux-x86_64.tar.gz` | Native |
+| Linux | arm64 | `lynx-vX.Y.Z-linux-arm64.tar.gz` | Cross-compiled (GNU toolchain) |
 | macOS | x86_64 (Intel) | — | **Unsupported** |
 | Windows | — | — | **Unsupported** |
 
-"CI-native" means the target is built and validated on a native runner by the
-release workflow. macOS Intel (x86_64) is unsupported because the embedding
-engine is backed by ONNX Runtime, which no longer publishes an x86_64 macOS
-build; use an Apple Silicon Mac or a supported Linux target. A source build does
-not work on that target either, because the ONNX Runtime dependency itself
-cannot be built. See
+Every release job runs on `ubuntu-latest`; no macOS or Windows runner is
+scheduled. Non-Linux binaries are cross-compiled on Linux. macOS Intel (x86_64)
+is unsupported because the embedding engine is backed by ONNX Runtime, which no
+longer publishes an x86_64 macOS build; use an Apple Silicon Mac or a supported
+Linux target. See
 [`docs/architecture/release-readiness.md`](docs/architecture/release-readiness.md)
-for the exact status of each target.
+for the exact status and validation limits of each target.
 
 ---
 
@@ -312,15 +311,19 @@ bounded file/module documents.
   in the package, not always first.
 - **Very large repositories** are supported up to the measured envelope;
   semantic retrieval is an exact `O(symbols)` scan (no approximate index).
-- **Resource requirements** are dominated by the embedding model (~250 MB
-  resident). The structural commands (`resolve`, `relations`, `status`,
-  `doctor`, `--version`) never initialize it. `search` and `context` do, even
-  with `--mode lexical`; lexical mode skips the query embedding and vector scan,
-  but the provider is still constructed.
+- **Resource requirements** are dominated by the embedding model (hundreds of MB
+  resident; ≈600 MB measured on the macOS arm64 reference environment) *when it
+  is used*. The structural commands (`resolve`, `relations`, `status`, `doctor`,
+  `--version`) never initialize it. Neither does `search --mode lexical`, nor a
+  no-change `index` pass, because the model is constructed lazily on the first
+  actual embedding call. Semantic/hybrid search and `context` initialize it once
+  per process. On an already-indexed workspace, `lx mcp` starts without it and
+  loads it on the first semantic request; a first-use build still embeds.
 
-Honest, measured numbers are in
-[`docs/architecture/final-product-report.md`](docs/architecture/final-product-report.md)
-and [`docs/architecture/production-readiness.md`](docs/architecture/production-readiness.md).
+Honest, measured numbers are in the
+[2026-10 performance audit](docs/audit/lynx-performance-and-productization-report.md),
+the earlier [final product report](docs/architecture/final-product-report.md),
+and the [production readiness matrix](docs/architecture/production-readiness.md).
 
 ---
 

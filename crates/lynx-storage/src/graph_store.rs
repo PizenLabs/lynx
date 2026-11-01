@@ -24,7 +24,12 @@ use rusqlite::{params, Connection};
 use crate::error::StorageError;
 
 /// Current on-disk schema version. Bump whenever the layout changes.
-pub const SCHEMA_VERSION: i64 = 3;
+///
+/// Version 4 accompanies the lexical `code_tokens` field (identifier word
+/// expansion). Bumping the graph version too makes an old index report
+/// `incompatible` and be reset, rather than leaving a populated graph next to
+/// a discarded lexical index.
+pub const SCHEMA_VERSION: i64 = 4;
 
 /// Maximum number of `?` bind parameters per statement. SQLite's default limit
 /// is 999; chunk large `IN (...)` lookups below it.
@@ -152,29 +157,32 @@ impl GraphStore {
     ) -> Result<(), StorageError> {
         let conn = self.lock()?;
         conn.execute("BEGIN", [])?;
-        let result = entries.iter().try_for_each(|(identity, range)| {
-            conn.execute(
+        let result = {
+            let mut statement = conn.prepare_cached(
                 "INSERT OR IGNORE INTO symbols (
                     content_hash, fqdn, trailing_name, kind, language, file_path,
                     start_byte, end_byte, start_line, end_line, snapshot_hash
                  )
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
-                params![
-                    identity.content_hash,
-                    identity.fqdn,
-                    identity.trailing_name(),
-                    encode_symbol_kind(identity.kind),
-                    encode_language(identity.language),
-                    identity.file_path.to_string_lossy(),
-                    range.start_byte as i64,
-                    range.end_byte as i64,
-                    range.start_line as i64,
-                    range.end_line as i64,
-                    snapshot_hash,
-                ],
-            )
-            .map(|_| ())
-        });
+            )?;
+            entries.iter().try_for_each(|(identity, range)| {
+                statement
+                    .execute(params![
+                        identity.content_hash,
+                        identity.fqdn,
+                        identity.trailing_name(),
+                        encode_symbol_kind(identity.kind),
+                        encode_language(identity.language),
+                        identity.file_path.to_string_lossy(),
+                        range.start_byte as i64,
+                        range.end_byte as i64,
+                        range.start_line as i64,
+                        range.end_line as i64,
+                        snapshot_hash,
+                    ])
+                    .map(|_| ())
+            })
+        };
         finish(conn, result)
     }
 
@@ -191,23 +199,27 @@ impl GraphStore {
     ) -> Result<(), StorageError> {
         let conn = self.lock()?;
         conn.execute("BEGIN", [])?;
-        let result = files.iter().try_for_each(|(path, content_hash)| {
-            conn.execute(
+        let result = {
+            let mut statement = conn.prepare_cached(
                 "INSERT INTO files (path, content_hash, snapshot_hash) VALUES (?1, ?2, ?3)
                  ON CONFLICT(path) DO UPDATE SET
                     content_hash = excluded.content_hash,
                     snapshot_hash = excluded.snapshot_hash",
-                params![path, content_hash, snapshot_hash],
-            )
-            .map(|_| ())
-        });
+            )?;
+            files.iter().try_for_each(|(path, content_hash)| {
+                statement
+                    .execute(params![path, content_hash, snapshot_hash])
+                    .map(|_| ())
+            })
+        };
         finish(conn, result)
     }
 
     /// Returns every indexed file as `(path, content_hash)`, ordered by path.
     pub fn file_states(&self) -> Result<Vec<(String, String)>, StorageError> {
         let conn = self.lock()?;
-        let mut statement = conn.prepare("SELECT path, content_hash FROM files ORDER BY path")?;
+        let mut statement =
+            conn.prepare_cached("SELECT path, content_hash FROM files ORDER BY path")?;
         let mut rows = statement.query([])?;
         let mut out = Vec::new();
         while let Some(row) = rows.next()? {
@@ -260,19 +272,22 @@ impl GraphStore {
     ) -> Result<(), StorageError> {
         let conn = self.lock()?;
         conn.execute("BEGIN", [])?;
-        let result = relations.iter().try_for_each(|relation| {
-            conn.execute(
+        let result = {
+            let mut statement = conn.prepare_cached(
                 "INSERT OR IGNORE INTO relations (source_id, target_id, kind, snapshot_hash)
                  VALUES (?1, ?2, ?3, ?4)",
-                params![
-                    relation.source_id,
-                    relation.target_id,
-                    encode_relation_kind(relation.kind),
-                    snapshot_hash,
-                ],
-            )
-            .map(|_| ())
-        });
+            )?;
+            relations.iter().try_for_each(|relation| {
+                statement
+                    .execute(params![
+                        relation.source_id,
+                        relation.target_id,
+                        encode_relation_kind(relation.kind),
+                        snapshot_hash,
+                    ])
+                    .map(|_| ())
+            })
+        };
         finish(conn, result)
     }
 
@@ -283,13 +298,16 @@ impl GraphStore {
     pub fn put_embeddings(&self, items: &[(String, Vec<f32>)]) -> Result<(), StorageError> {
         let conn = self.lock()?;
         conn.execute("BEGIN", [])?;
-        let result = items.iter().try_for_each(|(hash, vector)| {
-            conn.execute(
+        let result = {
+            let mut statement = conn.prepare_cached(
                 "INSERT OR REPLACE INTO embeddings (content_hash, dim, vector) VALUES (?1, ?2, ?3)",
-                params![hash, vector.len() as i64, encode_vector(vector)],
-            )
-            .map(|_| ())
-        });
+            )?;
+            items.iter().try_for_each(|(hash, vector)| {
+                statement
+                    .execute(params![hash, vector.len() as i64, encode_vector(vector)])
+                    .map(|_| ())
+            })
+        };
         finish(conn, result)
     }
 
@@ -315,8 +333,8 @@ impl GraphStore {
         F: FnMut(&str, &[f32]) -> bool,
     {
         let conn = self.lock()?;
-        let mut statement =
-            conn.prepare("SELECT content_hash, vector FROM embeddings ORDER BY content_hash")?;
+        let mut statement = conn
+            .prepare_cached("SELECT content_hash, vector FROM embeddings ORDER BY content_hash")?;
         let mut rows = statement.query([])?;
         let mut buffer: Vec<f32> = Vec::new();
         while let Some(row) = rows.next()? {

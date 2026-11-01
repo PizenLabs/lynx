@@ -9,7 +9,7 @@ use crate::error::EmbedError;
 use crate::VectorProvider;
 
 /// Number of dimensions produced by the `bge-small-en-v1.5` model.
-const BGE_SMALL_EN_V1_5_DIM: usize = 384;
+pub(crate) const BGE_SMALL_EN_V1_5_DIM: usize = 384;
 
 /// A [`crate::VectorProvider`] backed by FastEmbed's `bge-small-en-v1.5`.
 ///

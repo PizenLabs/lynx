@@ -8,7 +8,8 @@
 #      mismatch failure mode),
 #   4. that `.github/workflows/release.yml` can only publish production binaries
 #      from a stable tag — a prerelease tag has no path to `gh release create`,
-#   5. unsupported platforms are rejected and never released.
+#   5. unsupported platforms are rejected and never released,
+#   6. every workflow job uses `ubuntu-latest`; routine CI never cross-compiles.
 #
 # The classification rule lives in `scripts/release/classify_tag.sh`, which the
 # workflow itself invokes; this test therefore exercises the real release logic,
@@ -218,8 +219,13 @@ else
     fail "prerelease validation job is missing its explicit gate"
 fi
 
+# Only declared targets matter, not explanatory comments. Strip YAML comments
+# before scanning so the workflow can document why a target is unsupported.
+ACTIVE_WORKFLOW="$(sed 's/[[:space:]]*#.*$//' "$WORKFLOW")"
+
 # No Windows artifact is built: no Windows runner, no Windows Rust target.
-if grep -Eqi 'windows-(latest|[0-9])|windows-msvc|windows-gnu|windows-arm64|windows-x86_64' "$WORKFLOW"; then
+if printf '%s\n' "$ACTIVE_WORKFLOW" \
+    | grep -Eqi 'windows-(latest|[0-9])|windows-msvc|windows-gnu|windows-arm64|windows-x86_64'; then
     fail "release workflow declares an (unsupported) Windows target"
 else
     pass "release workflow builds no Windows target"
@@ -227,10 +233,84 @@ fi
 
 # No macOS Intel artifact is built: upstream ONNX Runtime publishes no x86_64
 # macOS build, so the target cannot be constructed and must not be declared.
-if grep -Eqi 'x86_64-apple-darwin|macos-15-intel|macos-13' "$WORKFLOW"; then
+if printf '%s\n' "$ACTIVE_WORKFLOW" \
+    | grep -Eqi 'x86_64-apple-darwin|macos-15-intel|macos-13'; then
     fail "release workflow declares an (unsupported) macOS Intel target"
 else
     pass "release workflow builds no macOS Intel target"
+fi
+
+# --- 4b. zero-cost runner policy --------------------------------------------
+
+echo "[zero-cost runners]"
+
+ALL_WORKFLOWS="$ROOT/.github/workflows"
+
+# Every job must run on the standard Linux runner. A matrix `runner:` field is
+# rejected too: it is how the old macOS/Windows matrix entries were selected.
+if bad="$(grep -RInE '^[[:space:]]*runs-on:' "$ALL_WORKFLOWS" \
+    | grep -vE 'runs-on:[[:space:]]*ubuntu-latest[[:space:]]*$')"; then
+    fail "non-ubuntu-latest runs-on entry: ${bad}"
+else
+    pass "every runs-on is ubuntu-latest"
+fi
+
+if bad="$(grep -RInE '^[[:space:]]*runner:[[:space:]]*(macos|windows)' "$ALL_WORKFLOWS")"; then
+    fail "non-Linux matrix runner: ${bad}"
+else
+    pass "no macOS/Windows matrix runner"
+fi
+
+if bad="$(grep -RInE 'runs-on:.*(macos|windows)' "$ALL_WORKFLOWS")"; then
+    fail "macOS/Windows runner scheduled: ${bad}"
+else
+    pass "no macOS/Windows runner is scheduled"
+fi
+
+# `ubuntu-24.04` / `ubuntu-24.04-arm` are valid images but the policy is a
+# single, stable label so the matrix cannot drift back to an arm64 runner.
+if bad="$(grep -RInE 'ubuntu-(22|24)\.[0-9]+' "$ALL_WORKFLOWS")"; then
+    fail "pinned/alternate Ubuntu runner image: ${bad}"
+else
+    pass "all jobs use the ubuntu-latest label"
+fi
+
+# Routine CI must not cross-compile release targets.
+if grep -Eq 'cargo (build|check|test)[^#]*--target' "$ROOT/.github/workflows/ci.yml"; then
+    fail "CI cross-compiles a release target during push/PR checks"
+else
+    pass "CI performs no cross-target builds"
+fi
+
+if grep -Eq 'cargo build --release' "$ROOT/.github/workflows/ci.yml"; then
+    fail "CI builds a release binary during push/PR checks"
+else
+    pass "CI does not build release binaries"
+fi
+
+if grep -q 'taiki-e/setup-cross-toolchain-action' "$WORKFLOW" \
+    && grep -q 'setup-osxcross' "$WORKFLOW" \
+    && grep -q 'aarch64-unknown-linux-gnu' "$WORKFLOW" \
+    && grep -q 'aarch64-apple-darwin' "$WORKFLOW"; then
+    pass "release cross-compiles Linux arm64 and macOS arm64 on Linux"
+else
+    fail "release workflow is missing its Linux/macOS cross toolchains"
+fi
+
+# The release trigger is either a v* tag or a manual dispatch.
+if grep -q 'tags: \["v\*"\]' "$WORKFLOW" && grep -q 'workflow_dispatch:' "$WORKFLOW"; then
+    pass "release triggers only on v* tags or workflow_dispatch"
+else
+    fail "release workflow trigger is not restricted to v* tags/workflow_dispatch"
+fi
+
+# CI is scoped to the main branch for both push and pull request.
+if grep -q 'push:' "$ROOT/.github/workflows/ci.yml" \
+    && grep -q 'branches: \[main\]' "$ROOT/.github/workflows/ci.yml" \
+    && grep -q 'pull_request:' "$ROOT/.github/workflows/ci.yml"; then
+    pass "CI runs on push/PR to main"
+else
+    fail "CI is not scoped to push/PR on main"
 fi
 
 # --- 5. unsupported platform never releases ---------------------------------

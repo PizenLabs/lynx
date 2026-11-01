@@ -3,6 +3,7 @@
 #
 # Reproducibly runs every product benchmark and writes one timestamped report:
 #
+#   parser throughput        (single-pass versus historical two-pass)
 #   retrieval quality        (135 grounded tasks, fake + real embeddings)
 #   repository scaling       (index time / RSS / size + cold query latency)
 #   incremental indexing     (update cost + freshness lifecycle)
@@ -38,6 +39,10 @@ log "rust:    $(rustc --version 2>/dev/null || echo unknown)"
 log "uname:   $(uname -a)"
 log ""
 
+log "== parser single-pass vs two-pass =="
+cargo run --release -q -p pizen-lynx-parser --example parser_bench | tee -a "$REPORT"
+log ""
+
 log "== retrieval quality (hermetic fake provider) =="
 cargo run --release -q -p pizen-lynx-core --example validation_suite \
   -- "$CORPUS" benchmarks/tasks/discovery.json benchmarks/truth/discovery.json \
@@ -60,6 +65,10 @@ log ""
 
 log "== persistence lifecycle =="
 python3 "$SCRIPTS/lifecycle_probe.py" "$LX" "$CORPUS" --queries 20 | tee -a "$REPORT"
+log ""
+
+log "== warm query (live MCP) =="
+python3 "$SCRIPTS/warm_query_probe.py" "$LX" "$CORPUS" --calls 50 | tee -a "$REPORT"
 log ""
 
 log "== MCP stress =="

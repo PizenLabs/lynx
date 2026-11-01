@@ -85,6 +85,14 @@ def main():
 
     srv = Server(args.lx, ws)
     start_rss = srv.rss()
+    # Warm one semantic request so steady-state RSS and slope are not dominated
+    # by the lazy one-time model load.
+    srv.call(
+        "tools/call",
+        {"name": "search", "arguments": {"query": "token", "limit": 5}},
+        9000,
+    )
+    warm_rss = srv.rss()
 
     # -- sequential workload -------------------------------------------------
     latencies = []
@@ -111,10 +119,11 @@ def main():
     print(f"latency_p50_ms: {percentile(latencies, 50) * 1000:.2f}")
     print(f"latency_p95_ms: {percentile(latencies, 95) * 1000:.2f}")
     print(f"latency_p99_ms: {percentile(latencies, 99) * 1000:.2f}")
-    print(f"rss_start_mb: {start_rss:.1f}")
+    print(f"rss_after_initialize_mb: {start_rss:.1f}")
+    print(f"rss_after_warmup_mb: {warm_rss:.1f}")
     print(f"rss_end_mb: {end_rss:.1f}")
-    print(f"rss_delta_mb: {end_rss - start_rss:+.2f}")
-    print(f"rss_slope_mb_per_call: {(end_rss - start_rss) / args.calls:.5f}")
+    print(f"rss_delta_after_warmup_mb: {end_rss - warm_rss:+.2f}")
+    print(f"rss_slope_mb_per_call: {(end_rss - warm_rss) / args.calls:.5f}")
 
     # -- malformed frames ----------------------------------------------------
     malformed = 0

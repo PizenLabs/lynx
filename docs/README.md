@@ -45,6 +45,8 @@ Key integration documents:
 - [Security policy](../SECURITY.md)
 - [Benchmarks](../benchmarks/README.md) — reproducible retrieval, scaling,
   lifecycle, and MCP measurements.
+- [Performance and productization audit](audit/lynx-performance-and-productization-report.md)
+  — measured before/after state of the 2026-10 optimization pass.
 - [Changelog](../CHANGELOG.md) — release history.
 - [Architecture records](architecture/README.md) — design documents, contracts,
   audits, and historical reports.
@@ -60,6 +62,7 @@ docs/
   mcp.md                   MCP tools and client setup
   troubleshooting.md       failure modes and fixes
   faq.md                   short answers
+  audit/                   dated performance and productization audits
   architecture/
     README.md              index and status of every architecture record
     *-contract.md          normative contracts (production, release)

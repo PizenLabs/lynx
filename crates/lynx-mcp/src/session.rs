@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
 use lynx_core::{Engine, IndexUpdate};
-use lynx_embed::{FastEmbedProvider, VectorProvider};
+use lynx_embed::{LazyFastEmbedProvider, VectorProvider};
 
 /// Directory (relative to the workspace root) holding the persistent index.
 pub const STORAGE_DIR: &str = ".lynx";
@@ -33,10 +33,11 @@ impl Session {
     ///
     /// This is the MCP startup policy: an agent's first request never pays a
     /// full indexing pass *per query*, but a workspace that has never been
-    /// indexed is indexed exactly once, at startup.
+    /// indexed is indexed exactly once, at startup. The embedding model is
+    /// constructed lazily, so a server that only serves structural or lexical
+    /// requests never loads it.
     pub fn open(workspace_root: &Path, include_tests: bool) -> Result<Self> {
-        let provider = FastEmbedProvider::with_cache_dir(model_cache_dir()?)
-            .context("initializing embedding model")?;
+        let provider = LazyFastEmbedProvider::with_cache_dir(model_cache_dir()?);
         Self::open_with(workspace_root, include_tests, Box::new(provider))
     }
 
@@ -47,16 +48,30 @@ impl Session {
         include_tests: bool,
         provider: Box<dyn VectorProvider>,
     ) -> Result<Self> {
-        if storage_root(workspace_root).is_dir() && storage_is_populated(workspace_root)? {
-            return Self::hydrate_with(workspace_root, provider);
+        let storage = storage_root(workspace_root);
+        // Open the substrate once: the same handle both decides whether the
+        // index is populated and serves the session. Probing population with a
+        // separate engine doubled startup work (two SQLite connections, two
+        // Tantivy readers) for no benefit.
+        let engine = Engine::new(&storage, provider)
+            .with_context(|| format!("opening index at {}", storage.display()))?;
+        if engine.index_status().symbol_count == 0 {
+            engine
+                .update_repository(workspace_root, include_tests)
+                .with_context(|| format!("indexing workspace {}", workspace_root.display()))?;
+        } else {
+            warn_if_stale(&engine);
         }
-        Self::build_with(workspace_root, include_tests, provider)
+        Ok(Self {
+            engine,
+            workspace_root: workspace_root.to_path_buf(),
+            storage_root: storage,
+        })
     }
 
     /// Hydrates an existing persistent index using the default embedding model.
     pub fn hydrate(workspace_root: &Path) -> Result<Self> {
-        let provider = FastEmbedProvider::with_cache_dir(model_cache_dir()?)
-            .context("initializing embedding model")?;
+        let provider = LazyFastEmbedProvider::with_cache_dir(model_cache_dir()?);
         Self::hydrate_with(workspace_root, Box::new(provider))
     }
 
@@ -90,8 +105,7 @@ impl Session {
     /// Builds (or incrementally updates) the persistent index for
     /// `workspace_root`, returning the applied change set.
     pub fn update(workspace_root: &Path, include_tests: bool) -> Result<(Self, IndexUpdate)> {
-        let provider = FastEmbedProvider::with_cache_dir(model_cache_dir()?)
-            .context("initializing embedding model")?;
+        let provider = LazyFastEmbedProvider::with_cache_dir(model_cache_dir()?);
         Self::update_with(workspace_root, include_tests, Box::new(provider))
     }
 
@@ -184,19 +198,6 @@ pub fn storage_root(workspace_root: &Path) -> PathBuf {
     workspace_root.join(STORAGE_DIR)
 }
 
-/// Whether the index under `workspace_root` has at least one symbol, read
-/// without constructing an engine.
-fn storage_is_populated(workspace_root: &Path) -> Result<bool> {
-    let storage = storage_root(workspace_root);
-    let db = storage.join("graph.sqlite3");
-    if !db.is_file() {
-        return Ok(false);
-    }
-    let engine = Engine::new(&storage, Box::new(lynx_embed::UnavailableProvider))
-        .with_context(|| format!("opening index at {}", storage.display()))?;
-    Ok(engine.index_status().symbol_count > 0)
-}
-
 /// Emits a stderr warning when the persisted index was built from a different
 /// git commit than the workspace's current HEAD.
 ///
@@ -219,17 +220,95 @@ fn warn_if_stale(engine: &Engine) {
 }
 
 /// Resolves the current `HEAD` commit for `dir`, when it is a git work tree.
+///
+/// Reads `.git/HEAD` and the referenced ref directly for the common case; a
+/// rare layout (custom `GIT_DIR`, unusual ref storage) falls back to the git
+/// binary rather than losing the staleness warning.
 fn git_head(dir: &Path) -> Option<String> {
-    let output = std::process::Command::new("git")
-        .args(["rev-parse", "HEAD"])
-        .current_dir(dir)
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
+    // No `.git` marker anywhere up the tree means this is not a work tree;
+    // do not spawn git just to confirm that.
+    git_toplevel(dir)?;
+    read_git_head(dir).or_else(|| {
+        let output = std::process::Command::new("git")
+            .args(["rev-parse", "HEAD"])
+            .current_dir(dir)
+            .output()
+            .ok()?;
+        if !output.status.success() {
+            return None;
+        }
+        let head = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        (!head.is_empty()).then_some(head)
+    })
+}
+
+/// Reads `HEAD` from a work tree without spawning `git`.
+fn read_git_head(dir: &Path) -> Option<String> {
+    let toplevel = git_toplevel(dir)?;
+    let dot_git = toplevel.join(".git");
+    let git_dir = if dot_git.is_dir() {
+        dot_git
+    } else {
+        let pointer = std::fs::read_to_string(&dot_git).ok()?;
+        let path = pointer.trim().strip_prefix("gitdir:")?.trim();
+        let path = Path::new(path);
+        if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            toplevel.join(path)
+        }
+    };
+
+    let head = std::fs::read_to_string(git_dir.join("HEAD")).ok()?;
+    let head = head.trim();
+    if let Some(reference) = head.strip_prefix("ref:") {
+        let reference = reference.trim();
+        return read_ref(&git_dir, reference);
     }
-    let head = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    (!head.is_empty()).then_some(head)
+    is_git_object(head).then(|| head.to_string())
+}
+
+/// Reads a symbolic ref, checking loose refs and then `packed-refs`.
+fn read_ref(git_dir: &Path, reference: &str) -> Option<String> {
+    if let Some(hash) = read_ref_file(git_dir, reference) {
+        return Some(hash);
+    }
+    let common = std::fs::read_to_string(git_dir.join("commondir"))
+        .ok()
+        .map(|path| git_dir.join(path.trim()))
+        .filter(|path| path != git_dir);
+    if let Some(common) = common {
+        if let Some(hash) = read_ref_file(&common, reference) {
+            return Some(hash);
+        }
+        return read_packed_ref(&common.join("packed-refs"), reference);
+    }
+    read_packed_ref(&git_dir.join("packed-refs"), reference)
+}
+
+/// Reads a loose ref file, accepting only a valid object id.
+fn read_ref_file(git_dir: &Path, reference: &str) -> Option<String> {
+    let value = std::fs::read_to_string(git_dir.join(reference)).ok()?;
+    let value = value.trim();
+    is_git_object(value).then(|| value.to_string())
+}
+
+/// Finds a ref in `packed-refs`.
+fn read_packed_ref(path: &Path, reference: &str) -> Option<String> {
+    let packed = std::fs::read_to_string(path).ok()?;
+    packed.lines().find_map(|line| {
+        let line = line.trim();
+        if line.starts_with('#') || line.starts_with('^') {
+            return None;
+        }
+        let (hash, name) = line.split_once(' ')?;
+        (name.trim() == reference && is_git_object(hash)).then(|| hash.to_string())
+    })
+}
+
+/// Whether `value` looks like a full git object id (SHA-1 or SHA-256).
+fn is_git_object(value: &str) -> bool {
+    matches!(value.len(), 40 | 64) && value.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
 /// Resolves the workspace root for the current working directory: the
@@ -264,22 +343,20 @@ fn model_cache_dir() -> Result<PathBuf> {
 }
 
 /// Git toplevel containing `dir`, if `dir` is inside a work tree.
+///
+/// Walks ancestors looking for the `.git` marker (a directory in a normal
+/// checkout, a file in a linked worktree or submodule). This avoids spawning a
+/// `git` process on the startup path of every command, which dominated the
+/// cold latency of otherwise millisecond-scale operations.
 fn git_toplevel(dir: &Path) -> Option<PathBuf> {
-    let output = std::process::Command::new("git")
-        .arg("rev-parse")
-        .arg("--show-toplevel")
-        .current_dir(dir)
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
+    let mut current = Some(dir);
+    while let Some(candidate) = current {
+        if candidate.join(".git").exists() {
+            return Some(candidate.to_path_buf());
+        }
+        current = candidate.parent();
     }
-    let text = String::from_utf8_lossy(&output.stdout);
-    let trimmed = text.trim();
-    if trimmed.is_empty() {
-        return None;
-    }
-    Some(PathBuf::from(trimmed))
+    None
 }
 
 #[cfg(test)]
@@ -290,6 +367,67 @@ mod tests {
     fn git_toplevel_is_none_outside_work_tree() {
         let tmp = tempfile::tempdir().unwrap();
         assert!(git_toplevel(tmp.path()).is_none());
+    }
+
+    #[test]
+    fn git_toplevel_finds_the_enclosing_work_tree() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("repo");
+        let nested = root.join("a").join("b");
+        std::fs::create_dir_all(root.join(".git")).unwrap();
+        std::fs::create_dir_all(&nested).unwrap();
+        assert_eq!(git_toplevel(&nested).as_deref(), Some(root.as_path()));
+    }
+
+    #[test]
+    fn git_head_reads_loose_and_packed_refs_without_git() {
+        let hash = "0123456789abcdef0123456789abcdef01234567";
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("repo");
+        let git = root.join(".git");
+        std::fs::create_dir_all(git.join("refs/heads")).unwrap();
+        std::fs::write(git.join("HEAD"), "ref: refs/heads/main\n").unwrap();
+        std::fs::write(git.join("refs/heads/main"), format!("{hash}\n")).unwrap();
+        assert_eq!(read_git_head(&root).as_deref(), Some(hash));
+        assert_eq!(git_head(&root).as_deref(), Some(hash));
+
+        // Loose ref removed: the same ref is found in packed-refs.
+        std::fs::remove_file(git.join("refs/heads/main")).unwrap();
+        std::fs::write(
+            git.join("packed-refs"),
+            format!("# pack-refs with: peeled fully-peeled\n{hash} refs/heads/main\n"),
+        )
+        .unwrap();
+        assert_eq!(read_git_head(&root).as_deref(), Some(hash));
+
+        // Detached HEAD stores the object id directly.
+        std::fs::write(git.join("HEAD"), format!("{hash}\n")).unwrap();
+        assert_eq!(read_git_head(&root).as_deref(), Some(hash));
+    }
+
+    #[test]
+    fn git_head_reads_common_refs_from_a_linked_worktree() {
+        let hash = "0123456789abcdef0123456789abcdef01234567";
+        let tmp = tempfile::tempdir().unwrap();
+        let main = tmp.path().join("main");
+        let git = main.join(".git");
+        let worktree = tmp.path().join("feature");
+        let worktree_git = git.join("worktrees/feature");
+        std::fs::create_dir_all(git.join("refs/heads")).unwrap();
+        std::fs::create_dir_all(&worktree_git).unwrap();
+        std::fs::create_dir_all(&worktree).unwrap();
+        std::fs::write(git.join("HEAD"), "ref: refs/heads/main\n").unwrap();
+        std::fs::write(git.join("refs/heads/main"), format!("{hash}\n")).unwrap();
+        std::fs::write(
+            worktree.join(".git"),
+            format!("gitdir: {}\n", worktree_git.display()),
+        )
+        .unwrap();
+        std::fs::write(worktree_git.join("HEAD"), "ref: refs/heads/main\n").unwrap();
+        std::fs::write(worktree_git.join("commondir"), "../..\n").unwrap();
+
+        assert_eq!(git_toplevel(&worktree).as_deref(), Some(worktree.as_path()));
+        assert_eq!(read_git_head(&worktree).as_deref(), Some(hash));
     }
 
     #[test]

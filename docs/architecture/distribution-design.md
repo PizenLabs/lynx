@@ -35,20 +35,22 @@ release design; Part II (§13–§18) is the public-crate and crates.io design.
 
 ## 2. Release artifact matrix
 
-Artifacts are built on **native runners per target** — no cross-compilation, and
-no support claimed without a native build of the real binary.
+Artifacts are **cross-compiled on `ubuntu-latest`**; no macOS or Windows runner
+is scheduled. Linux x86_64 is built natively, Linux arm64 with the GNU cross
+toolchain, and macOS arm64 with osxcross. No support is claimed for a target
+that cannot be built.
 
-| Target | Runner | Artifact | Policy |
+| Target | Build host / engine | Artifact | Policy |
 |---|---|---|---|
-| macOS arm64 | `macos-14` | `lynx-vX.Y.Z-darwin-arm64.tar.gz` | REQUIRED — native build + validation |
-| Linux x86_64 | `ubuntu-24.04` | `lynx-vX.Y.Z-linux-x86_64.tar.gz` | REQUIRED — native build + validation |
-| Linux arm64 | `ubuntu-24.04-arm` | `lynx-vX.Y.Z-linux-arm64.tar.gz` | REQUIRED — native build + validation; runner availability is CONDITIONAL on the repository plan |
+| macOS arm64 | `ubuntu-latest` + osxcross | `lynx-vX.Y.Z-darwin-arm64.tar.gz` | REQUIRED — cross-compiled + static validation |
+| Linux x86_64 | `ubuntu-latest` native | `lynx-vX.Y.Z-linux-x86_64.tar.gz` | REQUIRED — native build + full validation |
+| Linux arm64 | `ubuntu-latest` + GNU cross toolchain | `lynx-vX.Y.Z-linux-arm64.tar.gz` | REQUIRED — cross-compiled + QEMU smoke test |
 | macOS x86_64 | — | — | **UNSUPPORTED** — upstream ONNX Runtime ships no x86_64 macOS build, so no target is built or claimed; the installer rejects it explicitly. |
-| Windows | — | — | **UNSUPPORTED** — no target built or claimed; the installer rejects it explicitly. |
+| Windows | — | — | **UNSUPPORTED** — no upstream ONNX Runtime MinGW build; no target built or claimed; the installer rejects it explicitly. |
+| Linux musl | — | — | **UNSUPPORTED** — no upstream ONNX Runtime musl build; no target built or claimed. |
 
-A declared target that cannot be built **fails the release** (fail closed): if
-the Linux arm64 runner is unavailable, the `build` job fails and no release is
-published. An incomplete artifact set is never uploaded.
+A declared target that cannot be built **fails the release** (fail closed). An
+incomplete artifact set is never uploaded.
 
 **Archive contents.** Each archive contains a single file, `lx`, at the archive
 root, mode `0755`. There are no directories, no README, no data files. The
@@ -339,9 +341,9 @@ load no embedding model.
   from the archives plus the fetched closure, replace crates.io with it, and
   `cargo install --offline pizen-lynx`; then verify `lx --version` and
   `lx doctor`. No publishing credentials.
-- **CI**: `ci.yml` runs the hermetic installer suite on Linux + macOS and the
-  registry-install test on Linux; `release.yml` runs the full clean-machine
-  suite natively on every target.
+- **CI**: `ci.yml` runs the hermetic installer suite and the registry-install
+  test on Linux; `release.yml` cross-compiles every declared target on
+  `ubuntu-latest` and runs the full clean-machine suite on `linux-x86_64`.
 
 ---
 

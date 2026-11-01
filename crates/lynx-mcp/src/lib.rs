@@ -217,8 +217,9 @@ pub(crate) mod test_support {
 
 #[cfg(test)]
 mod tests {
-    use super::test_support::fixture_session;
+    use super::test_support::{fixture_session, FakeProvider};
     use crate::rpc;
+    use crate::Session;
     use serde_json::Value;
 
     fn request(id: u64, method: &str, params: &str) -> String {
@@ -229,6 +230,63 @@ mod tests {
         let value: Value = serde_json::from_str(response).expect("valid json");
         assert!(value.get("error").is_none(), "unexpected error: {response}");
         value["result"].clone()
+    }
+
+    #[test]
+    fn structural_and_lexical_queries_need_no_embedding_provider() {
+        let workspace = tempfile::tempdir().expect("temp workspace");
+        std::fs::write(
+            workspace.path().join("service.go"),
+            "package auth\n\nfunc Validate() bool { return true }\n",
+        )
+        .expect("fixture source");
+        // Build the index with a provider, then hydrate without one, exactly as
+        // a lexical/structural-only session does.
+        let built = Session::open_with(workspace.path(), false, Box::new(FakeProvider))
+            .expect("indexed session");
+        drop(built);
+        let session =
+            Session::hydrate_with(workspace.path(), Box::new(lynx_embed::UnavailableProvider))
+                .expect("model-free session");
+
+        let resolved = rpc::handle_for_test(
+            &session,
+            &request(
+                60,
+                "tools/call",
+                r#"{"name":"resolve","arguments":{"name":"auth::Validate"}}"#,
+            ),
+        )
+        .unwrap();
+        assert!(result_of(&resolved)["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("auth::Validate"));
+
+        let lexical = rpc::handle_for_test(
+            &session,
+            &request(
+                61,
+                "tools/call",
+                r#"{"name":"search","arguments":{"query":"Validate","mode":"lexical"}}"#,
+            ),
+        )
+        .unwrap();
+        assert!(!result_of(&lexical)["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .is_empty());
+
+        let semantic = rpc::handle_for_test(
+            &session,
+            &request(
+                62,
+                "tools/call",
+                r#"{"name":"search","arguments":{"query":"Validate","mode":"semantic"}}"#,
+            ),
+        )
+        .unwrap();
+        assert_eq!(result_of(&semantic)["isError"], Value::Bool(true));
     }
 
     #[test]

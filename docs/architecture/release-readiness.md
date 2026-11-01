@@ -44,8 +44,8 @@ bump [workspace.package] version + [workspace.dependencies] versions in Cargo.to
          classify : scripts/release/classify_tag.sh -> stable | prerelease | invalid
          verify   : fmt / check / clippy / test
          guard    : tag == resolved Cargo package version (check_versions.sh)
-         build    : (stable only) native build + version check + package + smoke
-                    + clean-machine, per target
+         build    : (stable only) cross-compile on ubuntu-latest + version
+                    check + package + smoke/static validation, per target
          publish  : (stable only) SHA256SUMS from final artifacts + GitHub Release
     -> (gated, manual) crates.io publish in dependency order
     -> install.sh resolves vX.Y.Z and verifies the checksum before installing
@@ -59,23 +59,27 @@ package version fails the `version-guard` job; an invalid tag fails the
 
 ## 2. Artifact matrix
 
-| Target | Runner | Artifact | Checksum | Policy |
+| Target | Build host / engine | Artifact | Checksum | Policy |
 |---|---|---|---|---|
-| macOS arm64 | `macos-14` | `lynx-vX.Y.Z-darwin-arm64.tar.gz` | in `SHA256SUMS` | REQUIRED (validated locally) |
-| Linux x86_64 | `ubuntu-24.04` | `lynx-vX.Y.Z-linux-x86_64.tar.gz` | in `SHA256SUMS` | REQUIRED (CI-native) |
-| Linux arm64 | `ubuntu-24.04-arm` | `lynx-vX.Y.Z-linux-arm64.tar.gz` | in `SHA256SUMS` | REQUIRED (CI-native; runner availability CONDITIONAL) |
+| macOS arm64 | `ubuntu-latest` + osxcross | `lynx-vX.Y.Z-darwin-arm64.tar.gz` | in `SHA256SUMS` | REQUIRED (cross-compiled) |
+| Linux x86_64 | `ubuntu-latest` native | `lynx-vX.Y.Z-linux-x86_64.tar.gz` | in `SHA256SUMS` | REQUIRED (native) |
+| Linux arm64 | `ubuntu-latest` + GNU cross toolchain | `lynx-vX.Y.Z-linux-arm64.tar.gz` | in `SHA256SUMS` | REQUIRED (cross-compiled) |
 | macOS x86_64 | — | — | — | **UNSUPPORTED** (no upstream ONNX Runtime build) |
-| Windows | — | — | — | **UNSUPPORTED** |
+| Windows | — | — | — | **UNSUPPORTED** (no upstream ONNX Runtime build) |
+| Linux musl | — | — | — | **UNSUPPORTED** (no upstream ONNX Runtime build) |
 
-"CI-native" means the target is built and validated natively by the release
-workflow but has not been executed in the environment where this phase was
-developed. A declared target that cannot be built fails the release
-(fail-closed); no partial artifact set is published.
+Every target is built on the standard Linux runner. No macOS or Windows runner
+is scheduled; non-Linux binaries are produced with cross toolchains.
+
+A declared target that cannot be built fails the release (fail-closed); no
+partial artifact set is published.
 
 macOS Intel (x86_64) is deliberately absent: the embedding engine is backed by
 ONNX Runtime (via `fastembed`/`ort`), and upstream ONNX Runtime no longer
 publishes an x86_64 macOS build, so the target cannot be built at all. It is not
 declared, `install.sh` rejects it explicitly, and no artifact is claimed.
+Windows and musl are absent for the same reason: `ort-sys` publishes no MinGW or
+musl ONNX Runtime binary.
 
 ## 3. crates.io package matrix (publish order)
 
@@ -116,9 +120,11 @@ A release is cut only when all of the following hold:
 - [ ] `[workspace.dependencies]` version requirements equal the release version.
 - [ ] `verify` job green (fmt / check / clippy / test).
 - [ ] Every `build` matrix job green — archive produced.
-- [ ] Native `lx --version` equals the tag version; `lx mcp --check` green on every target.
+- [ ] Executable targets report the tag version: `lx --version` and
+      `lx mcp --check` on `linux-x86_64` (native) and `linux-arm64` (QEMU).
+- [ ] `darwin-arm64` embeds the tag version and is a 64-bit arm64 Mach-O binary.
 - [ ] Each archive contains exactly `lx` at its root.
-- [ ] Native `clean_machine_test.sh` green on every target.
+- [ ] `clean_machine_test.sh` green on `linux-x86_64`.
 - [ ] `SHA256SUMS` generated from the published archives; every archive present.
 - [ ] Release assets present and downloadable.
 - [ ] `install.sh` installs the release on at least one platform and reports the
@@ -138,12 +144,17 @@ GitHub Release.
 
 - The tag is classified by one shared rule; a prerelease tag cannot reach the
   `build` or `release` jobs.
-- Archives are built natively on each target (no cross-compilation claims).
+- Every job runs on `ubuntu-latest`; no macOS or Windows runner is scheduled.
+- Non-Linux archives are cross-compiled on Linux: Linux arm64 with the GNU
+  cross toolchain, macOS arm64 with osxcross.
+- Runtime validation is bounded by Linux execution: `linux-x86_64` runs the
+  clean-machine suite, `linux-arm64` runs `--version`/`mcp --check` under QEMU,
+  and `darwin-arm64` is validated statically (version string and Mach-O arch).
 - Failed/skipped targets publish nothing: `release` needs all of `build`, and
   `SHA256SUMS` is generated after the build matrix completes.
 - Each archive contains exactly `lx`; the built binary reports the tag version.
-- CI additionally runs the hermetic installer suite on Linux + macOS on every
-  push and pull request (`ci.yml` → `distribution` job) and the release
+- CI additionally runs the hermetic installer suite on Linux on every push and
+  pull request (`ci.yml` → `distribution` job) and the release
   classification/version guards (`ci.yml` → `release` job).
 - crates.io publication is **not** automated: the boundary must be confirmed and
   the ordered publish run deliberately (see §6).
@@ -172,23 +183,27 @@ tests/distribution/clean_machine_test.sh
 
 ## 7. Known limits
 
-1. **Unverified-on-this-host platforms.** Only macOS arm64 was executed here.
-   The other matrix targets are wired to native CI runners and are gated by the
-   release job.
+1. **Cross-compiled, not natively executed.** `linux-x86_64` is executed
+   natively. `linux-arm64` is executed under QEMU. `darwin-arm64` cannot be
+   executed on a Linux runner; it is validated by tag/package version, embedded
+   version string, and Mach-O architecture. The full clean-machine flow is
+   exercised on `linux-x86_64` only.
 2. **macOS Intel (x86_64) is unsupported.** The embedding engine is backed by
    ONNX Runtime, and no upstream x86_64 macOS build exists (neither the
    `fastembed`/`ort` prebuilt binaries nor Microsoft's own release assets), so
    the target cannot be built. It is not in the matrix and `install.sh` rejects
    it explicitly.
-3. **`ubuntu-24.04-arm` availability.** arm64 GitHub-hosted runners depend on the
-   repository's plan; if the runner is unavailable, the `build` job fails and no
-   release is published (fail-closed, not fail-silent).
+3. **No Windows or musl.** `ort-sys` publishes no MinGW or musl ONNX Runtime
+   binary, so those targets cannot be built. They are not declared and the
+   installer rejects them.
 4. **First index needs network.** The embedding model is fetched once into
    `$HOME/.cache/lynx/fastembed`; a fully offline first index is not supported.
 5. **macOS notarization/signing.** Not present; binaries are unsigned. Checksums
    cover transport integrity, not publisher authenticity.
-6. **No Windows.** Explicitly unsupported and rejected by the installer.
-7. **crates.io requires the ordered publish.** Because the workspace is not a
+6. **crates.io requires the ordered publish.** Because the workspace is not a
    single crate, publishing `pizen-lynx` requires the six internal crates to be
    published first; the hermetic registry test proves the graph installs without
    requiring credentials.
+7. **macOS arm64 deployment target.** The cross build sets
+   `MACOSX_DEPLOYMENT_TARGET=13.4` to match the upstream ONNX Runtime prebuilt.
+   Older macOS versions are not supported by that artifact.

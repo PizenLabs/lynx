@@ -1,14 +1,34 @@
 name: CI
 
+# Continuous integration only. Every job runs on GitHub's standard Linux
+# runner; no macOS or Windows runner is ever scheduled. Release binaries are
+# cross-compiled in `release.yml`, never during routine push/PR checks.
+#
+# Cost policy: all jobs use `ubuntu-latest` (standard GitHub-hosted runner) and
+# therefore consume no paid macOS/Windows metered capacity.
+
 on:
   push:
-    branches: ["**"]
+    branches: [main]
   pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
 
 jobs:
   lint:
-    name: Rust fmt/clippy/check
+    name: Rust fmt / check / clippy
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -18,25 +38,19 @@ jobs:
           components: rustfmt, clippy
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ci-linux
       - name: Format
         run: cargo fmt --all -- --check
       - name: Check
-        run: cargo check
+        run: cargo check --workspace
       - name: Clippy
-        run: cargo clippy --all-targets -- -D warnings
-
-  docs:
-    name: Markdown links
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-      - name: Check relative links and anchors
-        run: python3 scripts/docs/check_links.py
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
 
   test:
     name: Rust tests
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -44,16 +58,25 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ci-linux
       - name: Test
-        run: cargo test
+        run: cargo test --workspace
+
+  docs:
+    name: Markdown links
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Check relative links and anchors
+        run: python3 scripts/docs/check_links.py
 
   distribution:
     name: installer & distribution tests
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-24.04, macos-14]
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -62,7 +85,8 @@ jobs:
 
   release:
     name: release classification & version guards
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -70,12 +94,15 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ci-linux
       - name: Release classification, version consistency, workflow wiring
         run: tests/distribution/release_test.sh
 
   crates-io:
     name: crates.io packaging & registry install
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -83,5 +110,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ci-linux
       - name: Package every crate and install pizen-lynx from a local registry
         run: tests/distribution/cargo_install_test.sh
